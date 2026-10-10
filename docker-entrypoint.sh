@@ -13,6 +13,11 @@ if [ "$(id -u)" = "0" ]; then
     chown mybank:mybank "$data" "$backups"
     find "$data" "$backups" -maxdepth 1 -name 'my_bank*' ! -user mybank -exec chown mybank:mybank {} +
     [ -f "$data/home_assistant_token" ] && chown mybank:mybank "$data/home_assistant_token"
+    # Option `api_token` de l'add-on : options.json appartient à root (0600), on la lit avant d'abandonner root.
+    if [ -z "${MYBANK_API_TOKEN:-}" ] && [ -n "${SUPERVISOR_TOKEN:-}" ] && [ -f /data/options.json ]; then
+        MYBANK_API_TOKEN="$(python -c 'import json; print(json.load(open("/data/options.json")).get("api_token") or "")')"
+        export MYBANK_API_TOKEN
+    fi
     exec setpriv --reuid=mybank --regid=mybank --init-groups -- "$@"
 fi
 exec "$@"

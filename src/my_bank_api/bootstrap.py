@@ -11,10 +11,12 @@ import os
 import time
 import urllib.request
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .auth import ensure_token, new_token
 from .config import Settings
+from .models import ApiToken
 
 log = logging.getLogger(__name__)
 
@@ -27,9 +29,14 @@ INTERNAL_PORT = 8000
 
 
 def apply_env_token(settings: Settings, make_session: sessionmaker[Session]) -> None:
-    if settings.api_token:
-        with make_session() as session:
+    """Le jeton `MYBANK_API_TOKEN` suit le réglage : remplacé s'il change, révoqué s'il est retiré."""
+    with make_session() as session:
+        if settings.api_token:
             ensure_token(session, ENV_TOKEN_NAME, settings.api_token)
+        elif (row := session.scalar(select(ApiToken).where(ApiToken.name == ENV_TOKEN_NAME))) is not None:
+            session.delete(row)
+            session.commit()
+            log.info("Jeton %s retiré du réglage : révoqué", ENV_TOKEN_NAME)
 
 
 def addon_token(settings: Settings, make_session: sessionmaker[Session]) -> str:

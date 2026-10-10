@@ -22,6 +22,9 @@ def test_env_token_is_accepted_and_replaced_when_it_changes(tmp_path):
     with TestClient(create_app(_settings(tmp_path, api_token="mb_second"))) as client:
         assert _status(client, "mb_second") == 200
         assert _status(client, "mb_premier") == 401
+    # Réglage retiré (option de l'add-on vidée, variable supprimée) : le jeton est révoqué.
+    with TestClient(create_app(_settings(tmp_path))) as client:
+        assert _status(client, "mb_second") == 401
 
 
 def test_backup_dir_defaults_to_data_in_addon(monkeypatch):
