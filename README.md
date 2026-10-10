@@ -1,5 +1,7 @@
 # My Bank API
 
+🇫🇷 [Lire en français](https://github.com/Patafoin/my-bank-api/blob/main/README.fr.md)
+
 Self-hosted, headless personal finance backend, modelled on desktop money managers such as MS Comptes Bancaires. Its main client is the Home Assistant integration [My Bank](https://github.com/Patafoin/ha-my-bank).
 
 Python 3.13 · FastAPI · SQLAlchemy 2 + Alembic · SQLite (WAL). About 60–100 MB of RAM.
