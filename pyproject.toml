@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my-bank-api"
+version = "0.6.0"
+description = "Backend headless de gestion de comptes bancaires personnels (modèle MS Comptes Bancaires)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "sqlalchemy>=2.0.30,<3",
+    "alembic>=1.13,<2",
+    "pydantic>=2.7,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff"]
+
+[project.scripts]
+my-bank = "my_bank_api.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+my_bank_api = ["migrations/script.py.mako"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+extend-exclude = ["src/my_bank_api/migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# B008 : Depends()/Query() en valeur par défaut est l'idiome de FastAPI.
+ignore = ["B008", "E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: test de charge (100 000 opérations), lancé avec -m slow"]
+addopts = "-m 'not slow'"

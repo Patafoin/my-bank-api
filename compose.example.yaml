@@ -1,0 +1,14 @@
+# Example: docker compose -f compose.example.yaml up -d
+services:
+  my-bank-api:
+    image: ghcr.io/patafoin/my-bank-api:latest
+    container_name: my-bank-api
+    restart: unless-stopped
+    ports:
+      - "9931:8000"          # keep it on your LAN: never expose it to the Internet
+    volumes:
+      - ./data:/data         # my_bank.sqlite
+      - ./backups:/backups   # nightly consistent snapshots
+    environment:
+      TZ: Europe/Paris
+      MYBANK_API_TOKEN: "change-me-to-a-long-random-string"   # token for Home Assistant
