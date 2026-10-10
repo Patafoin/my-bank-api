@@ -8,9 +8,9 @@ Python 3.13 · FastAPI · SQLAlchemy 2 + Alembic · SQLite (WAL). Environ 60 à 
 
 ## Installation
 
-### Module complémentaire Home Assistant
+### Application Home Assistant (add-on)
 
-Ajoutez le dépôt de modules complémentaires `https://github.com/Patafoin/ha-addons` et installez **My Bank API**. Le module crée un jeton pour Home Assistant et s'annonce de lui-même : l'intégration My Bank se configure en un clic. Voir la documentation du module.
+Nécessite Home Assistant OS ou une installation Supervised (amd64 ou aarch64) ; testé sur Home Assistant OS 18.3 avec Home Assistant 2026.10.0. Paramètres → **Applications** → **Installer une application** → ⋮ → **Dépôts**, ajoutez `https://github.com/Patafoin/ha-addons`, puis installez **My Bank API** (les versions plus anciennes de Home Assistant appellent les applications *modules complémentaires*). L'application crée un jeton pour Home Assistant et s'annonce d'elle-même : l'intégration My Bank se configure en un clic. Voir la documentation de l'application.
 
 ### Docker
 
@@ -29,9 +29,9 @@ Image multi-architecture (amd64, arm64) : `ghcr.io/patafoin/my-bank-api:<version
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `MYBANK_API_TOKEN` | — | Jeton accepté par l'API (créé ou mis à jour au démarrage, stocké haché). Le moyen le plus simple de donner l'accès à Home Assistant |
+| `MYBANK_API_TOKEN` | — | Jeton accepté par l'API (créé ou mis à jour au démarrage, stocké haché). Le moyen le plus simple de donner l'accès à Home Assistant. Supprimer la variable le révoque au démarrage suivant |
 | `MYBANK_DATA_DIR` | `/data` | Dossier de la base `my_bank.sqlite` |
-| `MYBANK_BACKUP_DIR` | `/backups` (`/data/backups` dans le module complémentaire) | Dossier des sauvegardes nocturnes |
+| `MYBANK_BACKUP_DIR` | `/backups` (`/data/backups` dans l'application Home Assistant) | Dossier des sauvegardes nocturnes |
 | `MYBANK_BACKUP_HOUR` | `3` | Heure locale de la sauvegarde nocturne |
 | `MYBANK_BACKUP_KEEP_DAILY` / `_MONTHLY` | `14` / `12` | Rotation |
 | `MYBANK_JOBS_ENABLED` | `true` | Tâches quotidiennes (génération des opérations planifiées, sauvegarde) |
@@ -104,7 +104,7 @@ command.upgrade(c := alembic_config('sqlite:////tmp/gen.sqlite'), 'head'); \
 command.revision(c, message='description', autogenerate=True, rev_id='0004')"
 ```
 
-Publication : augmentez la version dans `pyproject.toml` et `src/my_bank_api/__init__.py`, puis posez le tag `vX.Y.Z` : GitHub Actions publie l'image ; reportez ensuite la même version dans le `config.yaml` du module complémentaire.
+Publication : augmentez la version dans `pyproject.toml` et `src/my_bank_api/__init__.py`, puis posez le tag `vX.Y.Z` : GitHub Actions publie l'image ; reportez ensuite la même version dans le `config.yaml` de l'application ([ha-addons](https://github.com/Patafoin/ha-addons)).
 
 ## Licence
 

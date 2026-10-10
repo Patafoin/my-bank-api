@@ -8,9 +8,9 @@ Python 3.13 · FastAPI · SQLAlchemy 2 + Alembic · SQLite (WAL). About 60–100
 
 ## Installation
 
-### Home Assistant add-on
+### Home Assistant app (add-on)
 
-Add the add-on repository `https://github.com/Patafoin/ha-addons` and install **My Bank API**. The add-on creates a token for Home Assistant and announces itself: the My Bank integration is set up with one click. See the add-on documentation.
+Requires Home Assistant OS or a Supervised installation (amd64 or aarch64); tested on Home Assistant OS 18.3 with Home Assistant 2026.10.0. Settings → **Apps** → **Install app** → ⋮ → **Repositories**, add `https://github.com/Patafoin/ha-addons`, then install **My Bank API** (older Home Assistant versions call apps *add-ons*). The app creates a token for Home Assistant and announces itself: the My Bank integration is set up with one click. See the app documentation.
 
 ### Docker
 
@@ -29,9 +29,9 @@ Multi-architecture image (amd64, arm64): `ghcr.io/patafoin/my-bank-api:<version>
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MYBANK_API_TOKEN` | — | Token accepted by the API (created or updated at start-up, stored hashed). The simplest way to give Home Assistant access |
+| `MYBANK_API_TOKEN` | — | Token accepted by the API (created or updated at start-up, stored hashed). The simplest way to give Home Assistant access. Removing the variable revokes it at the next start |
 | `MYBANK_DATA_DIR` | `/data` | Folder of the `my_bank.sqlite` database |
-| `MYBANK_BACKUP_DIR` | `/backups` (`/data/backups` in the add-on) | Folder of the nightly snapshots |
+| `MYBANK_BACKUP_DIR` | `/backups` (`/data/backups` in the Home Assistant app) | Folder of the nightly snapshots |
 | `MYBANK_BACKUP_HOUR` | `3` | Local hour of the nightly backup |
 | `MYBANK_BACKUP_KEEP_DAILY` / `_MONTHLY` | `14` / `12` | Rotation |
 | `MYBANK_JOBS_ENABLED` | `true` | Daily jobs (generation of scheduled transactions, backup) |
@@ -104,7 +104,7 @@ command.upgrade(c := alembic_config('sqlite:////tmp/gen.sqlite'), 'head'); \
 command.revision(c, message='description', autogenerate=True, rev_id='0004')"
 ```
 
-Release: bump the version in `pyproject.toml` and `src/my_bank_api/__init__.py`, tag `vX.Y.Z`: GitHub Actions publishes the image; then set the same version in the add-on's `config.yaml`.
+Release: bump the version in `pyproject.toml` and `src/my_bank_api/__init__.py`, tag `vX.Y.Z`: GitHub Actions publishes the image; then set the same version in the app's `config.yaml` ([ha-addons](https://github.com/Patafoin/ha-addons)).
 
 ## License
 
