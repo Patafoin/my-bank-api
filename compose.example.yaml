@@ -11,4 +11,4 @@ services:
       - ./backups:/backups   # nightly consistent snapshots
     environment:
       TZ: Europe/Paris
-      MYBANK_API_TOKEN: "change-me-to-a-long-random-string"   # token for Home Assistant
+      MYBANK_API_TOKEN: "change-me-to-a-long-random-string"   # token for Home Assistant: openssl rand -hex 32

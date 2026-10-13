@@ -16,7 +16,7 @@ Nécessite Home Assistant OS ou une installation Supervised (amd64 ou aarch64) ;
 
 ```bash
 curl -O https://raw.githubusercontent.com/Patafoin/my-bank-api/main/compose.example.yaml
-# modifiez MYBANK_API_TOKEN, puis :
+openssl rand -hex 32   # génère un jeton : collez-le dans MYBANK_API_TOKEN du fichier, gardez-le pour Home Assistant
 docker compose -f compose.example.yaml up -d
 curl http://localhost:9931/api/v1/health
 ```
