@@ -62,6 +62,7 @@ Backups: a consistent snapshot (SQLite backup API) at start-up if there is none 
 - **Budgets** (`/budgets`): one budget per account and month range (no overlap), a categories × months grid (`PUT /budgets/{id}/lines`), copy to a new period, planned / actual / variance report. Planned amounts are positive in the natural direction of the category; a category's figures include its sub-categories; a positive variance is favourable.
 - **Bulk move** (`POST /{accounts|categories|classes|payees}/{id}/move`, `{"target_id": …}`): every transaction and schedule of an item moves to another one. Accounts and payees expose a `transaction_count`.
 - **Shared expenses** (`/shared-accounts`, independent from bank accounts): participants (at least two), expenses (who paid, positive amount, date, label). Each share = total ÷ participants, remaining cents going to the biggest payers; next payer = whoever paid least; settlement = at most n − 1 transfers. Closing (`PATCH {"closed": true}`) freezes the account; it can be reopened.
+- **Attachments** (`PUT`/`DELETE /transactions/{id}/attachment`, `GET .../attachment/content`): one per transaction, either a link or a file (base64 on input, 10 MiB max, stored in the database); replacing one removes the previous one.
 
 ## API
 

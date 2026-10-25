@@ -62,6 +62,7 @@ Sauvegardes : un instantané cohérent (API de sauvegarde SQLite) au démarrage 
 - **Budgets** (`/budgets`) : un budget par compte et par plage de mois (sans chevauchement), une grille catégories × mois (`PUT /budgets/{id}/lines`), copie vers une nouvelle période, rapport prévu / réalisé / écart. Les montants prévus sont positifs dans le sens naturel de la catégorie ; les chiffres d'une catégorie incluent ses sous-catégories ; un écart positif est favorable.
 - **Déplacement en masse** (`POST /{accounts|categories|classes|payees}/{id}/move`, `{"target_id": …}`) : toutes les opérations et planifications d'un élément passent sur un autre. Les comptes et les tiers exposent un `transaction_count`.
 - **Dépenses partagées** (`/shared-accounts`, indépendantes des comptes bancaires) : participants (au moins deux), dépenses (qui a payé, montant positif, date, libellé). Part de chacun = total ÷ participants, les centimes restants allant aux plus gros payeurs ; prochain payeur = celui qui a le moins payé ; équilibrage = au plus n − 1 remboursements. La clôture (`PATCH {"closed": true}`) fige le compte ; il peut être rouvert.
+- **Justificatifs** (`PUT`/`DELETE /transactions/{id}/attachment`, `GET .../attachment/content`) : un par opération, soit un lien, soit un fichier (base64 en entrée, 10 Mio au maximum, stocké en base) ; le remplacer retire le précédent.
 
 ## API
 
