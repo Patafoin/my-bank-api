@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Text,
@@ -73,6 +74,11 @@ class OccurrenceStatus(enum.StrEnum):
     PENDING = "pending"
     GENERATED = "generated"
     SKIPPED = "skipped"
+
+
+class AttachmentKind(enum.StrEnum):
+    LINK = "link"
+    FILE = "file"
 
 
 class TxState(enum.IntEnum):
@@ -198,6 +204,9 @@ class Transaction(Timestamps, Base):
     transfer_peer: Mapped["Transaction | None"] = relationship(
         remote_side=[id], foreign_keys=[transfer_peer_id], viewonly=True, lazy="selectin"
     )
+    attachment: Mapped["Attachment | None"] = relationship(
+        back_populates="transaction", cascade="all, delete-orphan", uselist=False, lazy="selectin"
+    )
 
 
 class Split(Base):
@@ -212,6 +221,29 @@ class Split(Base):
     position: Mapped[int] = mapped_column(default=0)
 
     transaction: Mapped[Transaction] = relationship(back_populates="splits")
+
+
+class Attachment(Timestamps, Base):
+    """Justificatif d'une opération (décision 023) : un lien, ou un fichier stocké en base."""
+
+    __tablename__ = "attachments"
+    __table_args__ = (
+        UniqueConstraint("transaction_id", name="uq_attachments_transaction"),
+        CheckConstraint("kind IN ('link','file')", name="kind"),
+        CheckConstraint("kind != 'link' OR url IS NOT NULL", name="link_has_url"),
+        CheckConstraint("kind != 'file' OR (filename IS NOT NULL AND content IS NOT NULL)", name="file_has_content"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(2000))
+    filename: Mapped[str | None] = mapped_column(String(255))
+    mime_type: Mapped[str | None] = mapped_column(String(100))
+    size: Mapped[int | None] = mapped_column(Integer)
+    content: Mapped[bytes | None] = mapped_column(LargeBinary)
+
+    transaction: Mapped[Transaction] = relationship(back_populates="attachment")
 
 
 class Schedule(Timestamps, Base):

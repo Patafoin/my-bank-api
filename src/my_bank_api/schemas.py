@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints, model_validator
 
 from .i18n import tr
-from .models import AccountKind, CategoryKind, ScheduleEnd, ScheduleMode, ScheduleUnit, TxState
+from .models import AccountKind, AttachmentKind, CategoryKind, ScheduleEnd, ScheduleMode, ScheduleUnit, TxState
 from .money import Money
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -210,6 +210,36 @@ class PayeeOut(PayeeFields, Out):
     transaction_count: int = Field(default=0, description="Opérations rattachées à ce tiers")
 
 
+# --- Justificatifs (décision 023) -----------------------------------------------------------------
+
+# Taille décodée maximale d'un fichier (photo ou scan d'un justificatif, pas un coffre-fort documentaire) ;
+# le base64 envoyé par l'intégration pèse environ un tiers de plus.
+MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
+
+
+class AttachmentLink(Strict):
+    kind: Literal["link"] = "link"
+    url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+
+class AttachmentFile(Strict):
+    kind: Literal["file"] = "file"
+    filename: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+    content_base64: str = Field(description="Contenu brut du fichier, encodé en base64")
+    mime_type: str | None = Field(default=None, max_length=100)
+
+
+AttachmentIn = Annotated[AttachmentLink | AttachmentFile, Field(discriminator="kind")]
+
+
+class AttachmentOut(Out):
+    kind: AttachmentKind
+    url: str | None
+    filename: str | None
+    mime_type: str | None
+    size: int | None = Field(description="Octets ; fichier seulement")
+
+
 # --- Opérations ----------------------------------------------------------------------------------
 
 
@@ -296,6 +326,7 @@ class TransactionOut(Out):
     transfer_peer_id: int | None
     transfer_account_id: int | None = Field(description="Compte de l'autre opération d'un virement")
     splits: list[SplitOut]
+    attachment: AttachmentOut | None = Field(description="Justificatif (lien ou fichier) ; null si aucun")
 
 
 class TransactionWithBalance(TransactionOut):

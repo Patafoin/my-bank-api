@@ -1,5 +1,8 @@
+import base64
+import binascii
 import datetime as dt
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, or_, select
@@ -9,10 +12,25 @@ from .. import trees
 from ..db import get_session
 from ..errors import conflict, invalid, not_found
 from ..i18n import tr
-from ..models import Account, AnalysisClass, Category, Payee, PaymentMethod, Split, Transaction, TxState
+from ..models import (
+    Account,
+    AnalysisClass,
+    Attachment,
+    AttachmentKind,
+    Category,
+    Payee,
+    PaymentMethod,
+    Split,
+    Transaction,
+    TxState,
+)
 from ..money import from_cents, to_cents
 from ..operations import make_transfer
 from ..schemas import (
+    MAX_ATTACHMENT_SIZE,
+    AttachmentFile,
+    AttachmentIn,
+    AttachmentOut,
     BulkStateChange,
     SplitIn,
     StateChange,
@@ -23,7 +41,7 @@ from ..schemas import (
     TransferCreate,
     TransferOut,
 )
-from ..serialize import tx_out
+from ..serialize import attachment_out, tx_out
 
 router = APIRouter(prefix="/transactions", tags=["opérations"])
 transfers = APIRouter(prefix="/transfers", tags=["virements"])
@@ -308,6 +326,65 @@ def delete_transaction(tx_id: int, session: Session = Depends(get_session)):
         session.delete(t)
     session.commit()
     return Response(status_code=204)
+
+
+# --- Justificatifs (décision 023) -----------------------------------------------------------------
+
+
+def _decode_attachment(value: str) -> bytes:
+    try:
+        content = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as err:
+        raise invalid(tr("Justificatif : base64 invalide")) from err
+    if len(content) > MAX_ATTACHMENT_SIZE:
+        raise invalid(tr("Le justificatif dépasse {size} Mio", size=MAX_ATTACHMENT_SIZE // (1024 * 1024)))
+    return content
+
+
+@router.put("/{tx_id}/attachment", response_model=AttachmentOut, summary="Ajoute ou remplace le justificatif de l'opération")
+def set_attachment(tx_id: int, data: AttachmentIn, session: Session = Depends(get_session)):
+    tx = _get(session, tx_id)
+    if tx.attachment is not None:
+        session.delete(tx.attachment)
+        session.flush()
+    if isinstance(data, AttachmentFile):
+        content = _decode_attachment(data.content_base64)
+        attachment = Attachment(
+            transaction_id=tx.id,
+            kind=AttachmentKind.FILE,
+            filename=data.filename,
+            mime_type=data.mime_type,
+            content=content,
+            size=len(content),
+        )
+    else:
+        attachment = Attachment(transaction_id=tx.id, kind=AttachmentKind.LINK, url=data.url)
+    session.add(attachment)
+    session.commit()
+    return attachment_out(attachment)
+
+
+@router.delete("/{tx_id}/attachment", status_code=204, summary="Retire le justificatif de l'opération")
+def delete_attachment(tx_id: int, session: Session = Depends(get_session)):
+    tx = _get(session, tx_id)
+    if tx.attachment is not None:
+        session.delete(tx.attachment)
+        session.commit()
+    return Response(status_code=204)
+
+
+@router.get("/{tx_id}/attachment/content", summary="Contenu brut du justificatif (fichier uniquement)")
+def get_attachment_content(tx_id: int, session: Session = Depends(get_session)):
+    tx = _get(session, tx_id)
+    if tx.attachment is None or tx.attachment.kind != AttachmentKind.FILE:
+        raise not_found("Justificatif", tx_id)
+    att = tx.attachment
+    quoted = quote(att.filename)
+    return Response(
+        content=att.content,
+        media_type=att.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f"inline; filename=\"{att.filename}\"; filename*=UTF-8''{quoted}"},
+    )
 
 
 # --- Virements -----------------------------------------------------------------------------------

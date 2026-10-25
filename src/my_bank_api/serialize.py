@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .errors import conflict
-from .models import Account, Transaction
+from .models import Account, Attachment, Transaction
 from .money import from_cents
 
 
@@ -33,6 +33,18 @@ def account_out(account: Account, balances: dict, transaction_count: int = 0) ->
     }
 
 
+def attachment_out(att: Attachment | None) -> dict | None:
+    if att is None:
+        return None
+    return {
+        "kind": att.kind,
+        "url": att.url,
+        "filename": att.filename,
+        "mime_type": att.mime_type,
+        "size": att.size,
+    }
+
+
 def tx_out(tx: Transaction) -> dict:
     return {
         "id": tx.id,
@@ -47,6 +59,7 @@ def tx_out(tx: Transaction) -> dict:
         "state": tx.state,
         "transfer_peer_id": tx.transfer_peer_id,
         "transfer_account_id": tx.transfer_peer.account_id if tx.transfer_peer else None,
+        "attachment": attachment_out(tx.attachment),
         "splits": [
             {
                 "id": s.id,

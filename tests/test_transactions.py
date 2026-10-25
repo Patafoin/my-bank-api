@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 
 API = "/api/v1"
@@ -191,3 +193,73 @@ class TestTransfers:
             json={"from_account_id": cc["id"], "to_account_id": livret["id"], "date": "2026-10-01", "amount": "-5"},
         )
         assert r.status_code == 422
+
+
+class TestAttachment:
+    def test_link(self, client, make):
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        r = client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": "https://example.org/facture.pdf"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body == {"kind": "link", "url": "https://example.org/facture.pdf", "filename": None, "mime_type": None, "size": None}
+        assert client.get(f"{API}/transactions/{tx['id']}").json()["attachment"] == body
+
+    def test_file(self, client, make):
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        content = base64.b64encode(b"%PDF-1.4 fake").decode()
+        r = client.put(
+            f"{API}/transactions/{tx['id']}/attachment",
+            json={"kind": "file", "filename": "facture.pdf", "content_base64": content, "mime_type": "application/pdf"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body == {"kind": "file", "url": None, "filename": "facture.pdf", "mime_type": "application/pdf", "size": 13}
+        got = client.get(f"{API}/transactions/{tx['id']}/attachment/content")
+        assert got.status_code == 200 and got.content == b"%PDF-1.4 fake" and got.headers["content-type"] == "application/pdf"
+
+    def test_replace_and_delete(self, client, make):
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": "https://a"})
+        r = client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": "https://b"})
+        assert r.status_code == 200 and r.json()["url"] == "https://b"
+        assert client.delete(f"{API}/transactions/{tx['id']}/attachment").status_code == 204
+        assert client.get(f"{API}/transactions/{tx['id']}").json()["attachment"] is None
+        # idempotent : retirer un justificatif déjà absent ne plante pas
+        assert client.delete(f"{API}/transactions/{tx['id']}/attachment").status_code == 204
+
+    def test_content_requires_a_file_attachment(self, client, make):
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        assert client.get(f"{API}/transactions/{tx['id']}/attachment/content").status_code == 404
+        client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": "https://a"})
+        assert client.get(f"{API}/transactions/{tx['id']}/attachment/content").status_code == 404
+
+    def test_invalid_base64(self, client, make):
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        r = client.put(
+            f"{API}/transactions/{tx['id']}/attachment",
+            json={"kind": "file", "filename": "x.pdf", "content_base64": "not-base64!"},
+        )
+        assert r.status_code == 422
+
+    def test_too_large(self, client, make):
+        from my_bank_api.schemas import MAX_ATTACHMENT_SIZE
+
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        content = base64.b64encode(b"x" * (MAX_ATTACHMENT_SIZE + 1)).decode()
+        r = client.put(
+            f"{API}/transactions/{tx['id']}/attachment",
+            json={"kind": "file", "filename": "x.bin", "content_base64": content},
+        )
+        assert r.status_code == 422
+
+    def test_deleting_transaction_deletes_attachment(self, client, make):
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": "https://a"})
+        assert client.delete(f"{API}/transactions/{tx['id']}").status_code == 204
