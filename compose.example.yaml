@@ -6,9 +6,11 @@ services:
     restart: unless-stopped
     ports:
       - "9931:8000"          # keep it on your LAN: never expose it to the Internet
+      # - "127.0.0.1:9931:8000"   # instead, if Home Assistant runs on this host with network_mode: host
     volumes:
       - ./data:/data         # my_bank.sqlite
       - ./backups:/backups   # nightly consistent snapshots
     environment:
       TZ: Europe/Paris
       MYBANK_API_TOKEN: "change-me-to-a-long-random-string"   # token for Home Assistant: openssl rand -hex 32
+      # MYBANK_DOCS: "true"   # interactive documentation at /docs (readable without a token)

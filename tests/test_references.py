@@ -13,6 +13,31 @@ def test_account_crud(client, make):
     assert client.get(f"/api/v1/accounts/{acc['id']}").status_code == 404
 
 
+def test_account_currency(client, make):
+    acc = make.account("Compte courant")
+    assert acc["currency"] == "EUR"
+    usd = make.account("Compte US", currency="usd")
+    assert usd["currency"] == "USD"
+    r = client.patch(f"/api/v1/accounts/{acc['id']}", json={"currency": "gbp"})
+    assert r.status_code == 200 and r.json()["currency"] == "GBP"
+    assert client.patch(f"/api/v1/accounts/{acc['id']}", json={"currency": None}).status_code == 422
+    assert client.post("/api/v1/accounts", json={"name": "Invalide", "currency": "E"}).status_code == 422
+    assert client.post("/api/v1/accounts", json={"name": "Invalide2", "currency": "EURO"}).status_code == 422
+
+
+def test_account_default_is_exclusive(client, make):
+    a = make.account("A", is_default=True)
+    b = make.account("B")
+    assert a["is_default"] is True and b["is_default"] is False
+    r = client.patch(f"/api/v1/accounts/{b['id']}", json={"is_default": True})
+    assert r.status_code == 200 and r.json()["is_default"] is True
+    # le précédent compte par défaut a été désactivé automatiquement
+    assert client.get(f"/api/v1/accounts/{a['id']}").json()["is_default"] is False
+    # on peut retirer le compte par défaut sans qu'un autre le devienne
+    assert client.patch(f"/api/v1/accounts/{b['id']}", json={"is_default": False}).json()["is_default"] is False
+    assert all(not acc["is_default"] for acc in client.get("/api/v1/accounts").json())
+
+
 def test_account_with_transactions_cannot_be_deleted(client, make):
     acc = make.account()
     make.tx(acc["id"], "-1")

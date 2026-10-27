@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -89,7 +90,11 @@ class TxState(enum.IntEnum):
 
 class Account(Timestamps, Base):
     __tablename__ = "accounts"
-    __table_args__ = (CheckConstraint("kind IN ('checking','savings','card','cash','other')", name="kind"),)
+    __table_args__ = (
+        CheckConstraint("kind IN ('checking','savings','card','cash','other')", name="kind"),
+        # Un seul compte à la fois peut être par défaut (index partiel : ne contraint que is_default = true).
+        Index("uq_accounts_is_default", "is_default", unique=True, sqlite_where=text("is_default")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
@@ -102,6 +107,7 @@ class Account(Timestamps, Base):
     closed: Mapped[bool] = mapped_column(default=False)
     position: Mapped[int] = mapped_column(default=0)
     notes: Mapped[str | None] = mapped_column(Text)
+    is_default: Mapped[bool] = mapped_column(default=False)
 
 
 class Category(Timestamps, Base):

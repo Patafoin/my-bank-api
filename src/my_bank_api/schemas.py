@@ -9,6 +9,11 @@ from .models import AccountKind, AttachmentKind, CategoryKind, ScheduleEnd, Sche
 from .money import Money
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+Currency = Annotated[
+    str,
+    BeforeValidator(lambda v: v.strip().upper() if isinstance(v, str) else v),
+    StringConstraints(pattern=r"^[A-Z]{3}$"),
+]
 
 
 class Strict(BaseModel):
@@ -35,11 +40,13 @@ class AccountBase(Strict):
     kind: AccountKind = AccountKind.CHECKING
     number: str | None = None
     iban: str | None = None
+    currency: Currency = "EUR"
     opening_balance: Money = Field(default=Decimal("0.00"))
     opening_date: dt.date | None = None
     closed: bool = False
     position: int = 0
     notes: str | None = None
+    is_default: bool = Field(default=False, description="Préselectionné partout où un compte se choisit ; un seul compte à la fois")
 
 
 class AccountCreate(AccountBase):
@@ -51,11 +58,13 @@ class AccountUpdate(Strict):
     kind: AccountKind | None = None
     number: str | None = None
     iban: str | None = None
+    currency: Currency | None = None
     opening_balance: Money | None = None
     opening_date: dt.date | None = None
     closed: bool | None = None
     position: int | None = None
     notes: str | None = None
+    is_default: bool | None = None
 
 
 class AccountOut(Out):
@@ -64,12 +73,13 @@ class AccountOut(Out):
     kind: AccountKind
     number: str | None
     iban: str | None
-    currency: str
+    currency: Currency
     opening_balance: Money
     opening_date: dt.date | None
     closed: bool
     position: int
     notes: str | None
+    is_default: bool
     balances: Balances
     transaction_count: int = Field(default=0, description="Opérations du compte (chaque jambe d'un virement compte sur son compte)")
 
@@ -217,9 +227,17 @@ class PayeeOut(PayeeFields, Out):
 MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
 
 
+def _web_url(value: str) -> str:
+    # Lien ouvert tel quel par le navigateur : http(s) seulement (pas de javascript:, data:…).
+    scheme, _, rest = value.partition(":")
+    if scheme.lower() not in {"http", "https"} or not rest.startswith("//") or len(rest) <= 2:
+        raise ValueError(tr("le lien doit commencer par http:// ou https://"))
+    return value
+
+
 class AttachmentLink(Strict):
     kind: Literal["link"] = "link"
-    url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000), AfterValidator(_web_url)]
 
 
 class AttachmentFile(Strict):

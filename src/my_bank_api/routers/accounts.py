@@ -2,7 +2,7 @@ import datetime as dt
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from ..balances import account_balances, balances_by_account
@@ -30,6 +30,14 @@ def _get(session: Session, account_id: int) -> Account:
     return account
 
 
+def _clear_default(session: Session, except_id: int | None = None) -> None:
+    """Un seul compte par défaut à la fois : désactive les autres avant d'en activer un nouveau."""
+    stmt = update(Account).where(Account.is_default.is_(True)).values(is_default=False)
+    if except_id is not None:
+        stmt = stmt.where(Account.id != except_id)
+    session.execute(stmt)
+
+
 @router.get("", response_model=list[AccountOut], summary="Liste des comptes avec leurs trois soldes")
 def list_accounts(
     date: dt.date | None = Query(None, description="Soldes à cette date ; par défaut toutes les opérations"),
@@ -53,6 +61,8 @@ def _out(session: Session, account: Account, date: dt.date | None = None) -> dic
 def create_account(data: AccountCreate, session: Session = Depends(get_session)):
     values = data.model_dump()
     values["opening_balance"] = to_cents(data.opening_balance)
+    if values.get("is_default"):
+        _clear_default(session)
     account = Account(**values)
     session.add(account)
     commit_or_conflict(session, tr("Le compte « {name} » existe déjà", name=data.name))
@@ -69,12 +79,14 @@ def get_account(account_id: int, date: dt.date | None = None, session: Session =
 def update_account(account_id: int, data: AccountUpdate, session: Session = Depends(get_session)):
     account = _get(session, account_id)
     values = data.model_dump(exclude_unset=True)
-    for required in ("name", "kind", "opening_balance", "closed", "position"):
+    for required in ("name", "kind", "currency", "opening_balance", "closed", "position"):
         if required in values and values[required] is None:
             raise invalid(tr("`{key}` ne peut pas être vide", key=required))
     if "opening_balance" in values:
         # model_dump() sérialise les montants en texte : repartir de l'attribut (Decimal).
         values["opening_balance"] = to_cents(data.opening_balance)
+    if values.get("is_default"):
+        _clear_default(session, except_id=account_id)
     for key, value in values.items():
         setattr(account, key, value)
     commit_or_conflict(session, tr("Le compte « {name} » existe déjà", name=account.name))

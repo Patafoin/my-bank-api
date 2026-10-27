@@ -23,7 +23,7 @@ curl http://localhost:9931/api/v1/health
 
 Multi-architecture image (amd64, arm64): `ghcr.io/patafoin/my-bank-api:<version>` or `:latest`. Schema migrations are applied automatically at start-up.
 
-**Keep the API on your local network.** Never expose it to the Internet.
+**Keep the API on your local network.** Never expose it to the Internet. If Home Assistant runs on the same host with `network_mode: host`, publish the port on the loopback interface only: `"127.0.0.1:9931:8000"` instead of `"9931:8000"`, and use `http://127.0.0.1:9931` in the integration. Keep `9931:8000` when Home Assistant runs on another machine or in a container on another Docker network.
 
 ## Settings
 
@@ -35,6 +35,7 @@ Multi-architecture image (amd64, arm64): `ghcr.io/patafoin/my-bank-api:<version>
 | `MYBANK_BACKUP_HOUR` | `3` | Local hour of the nightly backup |
 | `MYBANK_BACKUP_KEEP_DAILY` / `_MONTHLY` | `14` / `12` | Rotation |
 | `MYBANK_JOBS_ENABLED` | `true` | Daily jobs (generation of scheduled transactions, backup) |
+| `MYBANK_DOCS` | `false` | Interactive documentation `/docs`, `/redoc` and `/openapi.json`. Off by default because these pages are readable without a token (they describe the API, not your data). Set `true` to browse them |
 
 The container drops root privileges by itself (user `mybank`, uid 1000); `user: "1000:1000"` in compose works as well.
 
@@ -53,10 +54,11 @@ Backups: a consistent snapshot (SQLite backup API) at start-up if there is none 
 
 - **Amounts**: decimal strings in the API (`"-14.80"`, a comma is accepted on input), integer cents in the database.
 - **Transaction state**: `0` not cleared, `1` cleared, `2` reconciled.
+- **Accounts**: a currency (ISO 4217, e.g. EUR, USD, GBP; defaults to EUR), one of them can be `is_default` (preselected wherever an account is chosen; setting a new one clears the previous).
 - **Three balances per account**: `total` (every transaction, including future-dated ones, unless `date` is given), `pointed` (states 1 and 2), `reconciled` (state 2). The opening balance is included in all three.
 - **Reconciled transactions are locked**: amount, date, account, splits and deletion are refused (409) until the transaction is un-reconciled.
 - **Splits**: every transaction has at least one line; their sum equals the amount.
-- **Transfers**: two twin transactions (`transfer_peer_id`); amount and date follow from one leg to the other, the cleared state stays per leg.
+- **Transfers**: two twin transactions (`transfer_peer_id`); amount and date follow from one leg to the other, the cleared state stays per leg. Refused (422) between two accounts of different currencies: the app never converts.
 - **Categories**: unlimited tree, typed `income` / `expense` / `savings` (inherited from the root). **Classes**: a second classification axis, also a tree.
 - **Scheduled transactions** (`/schedules`): a repetition rule (first date, every N days / weeks / months / quarters / years, ending never / on a date / after N occurrences) and a transaction template (payee, payment method, category, class, or a transfer to another account). Mode `periodic` (fixed amount) or `installments` (finite plan, one amount — and optionally one date — per occurrence, `PUT /schedules/{id}/occurrences`). Dates are computed from the first occurrence (31 January → 28/29 February → 31 March). Occurrences are generated at start-up, every night and on creation, when their date ≤ today + `lead_days`, never before `generate_from`; each one only once. An occurrence can be skipped, restored or entered early by hand.
 - **Budgets** (`/budgets`): one budget per account and month range (no overlap), a categories × months grid (`PUT /budgets/{id}/lines`), copy to a new period, planned / actual / variance report. Planned amounts are positive in the natural direction of the category; a category's figures include its sub-categories; a positive variance is favourable.
@@ -66,7 +68,7 @@ Backups: a consistent snapshot (SQLite backup API) at start-up if there is none 
 
 ## API
 
-Prefix `/api/v1`, header `Authorization: Bearer <token>` on everything but `/health`. Interactive documentation: `/docs` (descriptions in French).
+Prefix `/api/v1`, header `Authorization: Bearer <token>` on everything but `/health`. Interactive documentation: `/docs` (descriptions in French), with `MYBANK_DOCS=true` (option **docs** in the Home Assistant app).
 
 Error messages follow the `Accept-Language` header: `en`, `fr` or `de` (English for any other language, French when the header is absent). The Home Assistant integration sends the language of Home Assistant. Translations live in `src/my_bank_api/i18n_messages.py`, keyed by the French text passed to `tr()`; a test checks that every message has an English and a German version.
 

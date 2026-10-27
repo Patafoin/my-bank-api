@@ -1,7 +1,11 @@
+import dataclasses
 from decimal import Decimal
 
 import pytest
+from fastapi.testclient import TestClient
 
+from my_bank_api.config import Settings
+from my_bank_api.main import create_app
 from my_bank_api.money import from_cents, parse_amount, to_cents
 
 
@@ -17,8 +21,24 @@ def test_token_required(anon, header):
     assert anon.get("/api/v1/accounts", headers=headers).status_code == 401
 
 
-def test_openapi_available(anon):
-    assert anon.get("/openapi.json").status_code == 200
+def test_docs_off_by_default(anon):
+    """Lisibles sans jeton : coupées sauf MYBANK_DOCS=true (ou option `docs` de l'add-on)."""
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert anon.get(path).status_code == 404
+
+
+def test_docs_on_request(settings):
+    with TestClient(create_app(dataclasses.replace(settings, docs=True))) as client:
+        assert client.get("/openapi.json").status_code == 200
+        assert client.get("/docs").status_code == 200
+
+
+def test_docs_setting_from_env(monkeypatch):
+    monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+    monkeypatch.delenv("MYBANK_DOCS", raising=False)
+    assert Settings.from_env().docs is False
+    monkeypatch.setenv("MYBANK_DOCS", "true")
+    assert Settings.from_env().docs is True
 
 
 @pytest.mark.parametrize(

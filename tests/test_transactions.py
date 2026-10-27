@@ -181,6 +181,16 @@ class TestTransfers:
         )
         assert r.status_code == 422
 
+    def test_cross_currency_refused(self, client, make):
+        """No exchange-rate conversion anywhere in the app: both legs must share one currency."""
+        eur = make.account("Compte EUR")
+        usd = make.account("Compte USD", currency="usd")
+        r = client.post(
+            f"{API}/transfers",
+            json={"from_account_id": eur["id"], "to_account_id": usd["id"], "date": "2026-10-01", "amount": "10"},
+        )
+        assert r.status_code == 422
+
     def test_delete_removes_both(self, client, setup):
         _, _, t = setup
         assert client.delete(f"{API}/transactions/{t['source']['id']}").status_code == 204
@@ -236,6 +246,47 @@ class TestAttachment:
         assert client.get(f"{API}/transactions/{tx['id']}/attachment/content").status_code == 404
         client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": "https://a"})
         assert client.get(f"{API}/transactions/{tx['id']}/attachment/content").status_code == 404
+
+    def test_link_must_be_http(self, client, make):
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        for url in ("javascript:alert(1)", "data:text/html,x", "JavaScript://x", "https:", "facture.pdf"):
+            r = client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": url})
+            assert r.status_code == 422, url
+        r = client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": "HTTP://example.org/x"})
+        assert r.status_code == 200
+
+    def _put_file(self, client, tx, filename, mime_type):
+        content = base64.b64encode(b"<script>alert(1)</script>").decode()
+        body = {"kind": "file", "filename": filename, "content_base64": content, "mime_type": mime_type}
+        assert client.put(f"{API}/transactions/{tx['id']}/attachment", json=body).status_code == 200
+        return client.get(f"{API}/transactions/{tx['id']}/attachment/content")
+
+    def test_active_content_is_downloaded_not_rendered(self, client, make):
+        """HTML, SVG… servis tels quels exécuteraient du script sur l'origine de Home Assistant."""
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        for mime in ("text/html", "image/svg+xml", "application/xhtml+xml", None, "TEXT/HTML; charset=utf-8"):
+            got = self._put_file(client, tx, "x.html", mime)
+            assert got.headers["content-type"] == "application/octet-stream", mime
+            assert got.headers["content-disposition"].startswith("attachment;")
+            assert got.headers["x-content-type-options"] == "nosniff"
+            assert got.headers["content-security-policy"].startswith("sandbox")
+        got = self._put_file(client, tx, "photo.jpg", "image/jpeg")
+        assert got.headers["content-type"] == "image/jpeg" and got.headers["content-disposition"].startswith("inline;")
+        assert "content-security-policy" in got.headers
+        got = self._put_file(client, tx, "facture.pdf", "application/pdf")
+        assert got.headers["content-disposition"].startswith("inline;")
+        assert "content-security-policy" not in got.headers  # la visionneuse PDF de Chrome refuse `sandbox`
+
+    def test_filename_header(self, client, make):
+        acc = make.account()
+        tx = make.tx(acc["id"], "-14.80")
+        got = self._put_file(client, tx, "reçu €.pdf", "application/pdf")
+        assert got.status_code == 200
+        assert got.headers["content-disposition"] == "inline; filename=\"re_u _.pdf\"; filename*=UTF-8''re%C3%A7u%20%E2%82%AC.pdf"
+        got = self._put_file(client, tx, 'a"b\\c/d.pdf', "application/pdf")
+        assert got.headers["content-disposition"] == "inline; filename=\"a_b_c/d.pdf\"; filename*=UTF-8''a%22b%5Cc%2Fd.pdf"
 
     def test_invalid_base64(self, client, make):
         acc = make.account()

@@ -23,7 +23,7 @@ curl http://localhost:9931/api/v1/health
 
 Image multi-architecture (amd64, arm64) : `ghcr.io/patafoin/my-bank-api:<version>` ou `:latest`. Les migrations de schéma sont appliquées automatiquement au démarrage.
 
-**Gardez l'API sur votre réseau local.** Ne l'exposez jamais sur Internet.
+**Gardez l'API sur votre réseau local.** Ne l'exposez jamais sur Internet. Si Home Assistant tourne sur la même machine en `network_mode: host`, publiez le port sur l'interface locale seulement : `"127.0.0.1:9931:8000"` au lieu de `"9931:8000"`, et indiquez `http://127.0.0.1:9931` dans l'intégration. Gardez `9931:8000` si Home Assistant tourne sur une autre machine ou dans un conteneur sur un autre réseau Docker.
 
 ## Réglages
 
@@ -35,6 +35,7 @@ Image multi-architecture (amd64, arm64) : `ghcr.io/patafoin/my-bank-api:<version
 | `MYBANK_BACKUP_HOUR` | `3` | Heure locale de la sauvegarde nocturne |
 | `MYBANK_BACKUP_KEEP_DAILY` / `_MONTHLY` | `14` / `12` | Rotation |
 | `MYBANK_JOBS_ENABLED` | `true` | Tâches quotidiennes (génération des opérations planifiées, sauvegarde) |
+| `MYBANK_DOCS` | `false` | Documentation interactive `/docs`, `/redoc` et `/openapi.json`. Coupée par défaut car ces pages se lisent sans jeton (elles décrivent l'API, pas vos données). Mettre `true` pour les consulter |
 
 Le conteneur abandonne lui-même les privilèges root (utilisateur `mybank`, uid 1000) ; `user: "1000:1000"` dans le compose fonctionne aussi.
 
@@ -53,10 +54,11 @@ Sauvegardes : un instantané cohérent (API de sauvegarde SQLite) au démarrage 
 
 - **Montants** : chaînes décimales dans l'API (`"-14.80"`, la virgule est acceptée en entrée), centimes entiers dans la base.
 - **État d'une opération** : `0` non pointée, `1` pointée, `2` rapprochée.
+- **Comptes** : une devise (ISO 4217, ex. EUR, USD, GBP ; EUR par défaut), l'un d'eux peut être `is_default` (présélectionné partout où un compte se choisit ; en définir un nouveau efface le précédent).
 - **Trois soldes par compte** : `total` (toutes les opérations, y compris à date future, sauf si `date` est fourni), `pointed` (états 1 et 2), `reconciled` (état 2). Le solde initial est inclus dans les trois.
 - **Les opérations rapprochées sont verrouillées** : modification du montant, de la date, du compte, de la ventilation et suppression sont refusées (409) tant que l'opération n'est pas dé-rapprochée.
 - **Ventilations** : chaque opération a au moins une ligne ; leur somme est égale au montant.
-- **Virements** : deux opérations jumelles (`transfer_peer_id`) ; le montant et la date se reportent d'une jambe à l'autre, l'état de pointage reste propre à chaque jambe.
+- **Virements** : deux opérations jumelles (`transfer_peer_id`) ; le montant et la date se reportent d'une jambe à l'autre, l'état de pointage reste propre à chaque jambe. Refusé (422) entre deux comptes de devises différentes : l'application ne convertit jamais.
 - **Catégories** : arborescence illimitée, typée `income` / `expense` / `savings` (hérité de la racine). **Classes** : un second axe de classement, lui aussi arborescent.
 - **Opérations planifiées** (`/schedules`) : une règle de répétition (première date, tous les N jours / semaines / mois / trimestres / ans, sans fin / jusqu'à une date / après N échéances) et un modèle d'opération (tiers, moyen de paiement, catégorie, classe, ou virement vers un autre compte). Mode `periodic` (montant fixe) ou `installments` (échéancier fini, un montant — et éventuellement une date — par échéance, `PUT /schedules/{id}/occurrences`). Les dates sont calculées à partir de la première échéance (31 janvier → 28/29 février → 31 mars). Les échéances sont générées au démarrage, chaque nuit et à la création, quand leur date ≤ aujourd'hui + `lead_days`, jamais avant `generate_from` ; chacune une seule fois. Une échéance peut être sautée, rétablie ou saisie en avance à la main.
 - **Budgets** (`/budgets`) : un budget par compte et par plage de mois (sans chevauchement), une grille catégories × mois (`PUT /budgets/{id}/lines`), copie vers une nouvelle période, rapport prévu / réalisé / écart. Les montants prévus sont positifs dans le sens naturel de la catégorie ; les chiffres d'une catégorie incluent ses sous-catégories ; un écart positif est favorable.
@@ -66,7 +68,7 @@ Sauvegardes : un instantané cohérent (API de sauvegarde SQLite) au démarrage 
 
 ## API
 
-Préfixe `/api/v1`, en-tête `Authorization: Bearer <jeton>` partout sauf sur `/health`. Documentation interactive : `/docs` (descriptions en français).
+Préfixe `/api/v1`, en-tête `Authorization: Bearer <jeton>` partout sauf sur `/health`. Documentation interactive : `/docs` (descriptions en français), avec `MYBANK_DOCS=true` (option **docs** dans l'application Home Assistant).
 
 Les messages d'erreur suivent l'en-tête `Accept-Language` : `en`, `fr` ou `de` (anglais pour toute autre langue, français en l'absence d'en-tête). L'intégration Home Assistant envoie la langue de Home Assistant. Les traductions se trouvent dans `src/my_bank_api/i18n_messages.py`, indexées par le texte français passé à `tr()` ; un test vérifie que chaque message a une version anglaise et une version allemande.
 

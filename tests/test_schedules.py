@@ -144,6 +144,16 @@ def test_transfer_schedule_creates_twin_legs(client, make, today):
     assert out[0]["transfer_peer_id"] == inc[0]["id"] and inc[0]["splits"][0]["category_id"] == epargne["id"]
 
 
+def test_transfer_schedule_cross_currency_refused(client, make):
+    cc = make.account()
+    usd = make.account("Compte USD", currency="usd")
+    r = client.post(
+        f"{API}/schedules",
+        json={"account_id": cc["id"], "transfer_account_id": usd["id"], "label": "x", "amount": "-100", "start_date": "2026-10-07"},
+    )
+    assert r.status_code == 422
+
+
 # --- Échéancier (grille) -----------------------------------------------------------------------
 
 

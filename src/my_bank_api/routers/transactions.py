@@ -373,18 +373,39 @@ def delete_attachment(tx_id: int, session: Session = Depends(get_session)):
     return Response(status_code=204)
 
 
+# Types affichés dans le navigateur ; tout autre type (HTML, SVG…) pourrait exécuter du script sur
+# l'origine qui le sert (Home Assistant, via la vue de l'intégration) : il est servi en téléchargement.
+INLINE_TYPES = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp", "text/plain"}
+
+
+def _served_type(mime_type: str | None) -> str:
+    base = (mime_type or "").split(";")[0].strip().lower()
+    return base if base in INLINE_TYPES else "application/octet-stream"
+
+
+def _content_headers(att: Attachment) -> dict[str, str]:
+    served = _served_type(att.mime_type)
+    name = "".join(c for c in att.filename if c.isprintable())
+    # filename= : repli ASCII sans guillemet (les en-têtes HTTP sont en latin-1) ; filename* : nom exact.
+    fallback = "".join(c if c.isascii() and c not in '"\\' else "_" for c in name)
+    headers = {
+        "Content-Disposition": f"{'attachment' if served == 'application/octet-stream' else 'inline'}; filename=\"{fallback}\"; "
+        f"filename*=UTF-8''{quote(name, safe='')}",
+        "X-Content-Type-Options": "nosniff",
+    }
+    # Défense en plus ; pas pour le PDF, que la visionneuse de Chrome refuse d'afficher sous `sandbox`.
+    if served != "application/pdf":
+        headers["Content-Security-Policy"] = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"
+    return headers
+
+
 @router.get("/{tx_id}/attachment/content", summary="Contenu brut du justificatif (fichier uniquement)")
 def get_attachment_content(tx_id: int, session: Session = Depends(get_session)):
     tx = _get(session, tx_id)
     if tx.attachment is None or tx.attachment.kind != AttachmentKind.FILE:
         raise not_found("Justificatif", tx_id)
     att = tx.attachment
-    quoted = quote(att.filename)
-    return Response(
-        content=att.content,
-        media_type=att.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f"inline; filename=\"{att.filename}\"; filename*=UTF-8''{quoted}"},
-    )
+    return Response(content=att.content, media_type=_served_type(att.mime_type), headers=_content_headers(att))
 
 
 # --- Virements -----------------------------------------------------------------------------------
@@ -401,6 +422,17 @@ def create_transfer(data: TransferCreate, session: Session = Depends(get_session
         raise invalid(tr("Les comptes source et cible doivent être différents"))
     _check_refs(session, account_id=data.from_account_id, payment_method_id=data.payment_method_id)
     _check_refs(session, account_id=data.to_account_id, splits=[Split(category_id=data.category_id, class_id=data.class_id)])
+    from_account = session.get(Account, data.from_account_id)
+    to_account = session.get(Account, data.to_account_id)
+    if from_account.currency != to_account.currency:
+        # Aucune conversion de change dans l'application : un virement garde le même montant sur les deux jambes.
+        raise invalid(
+            tr(
+                "Le compte source est en {from_currency}, le compte cible en {to_currency} : aucune conversion n'est faite",
+                from_currency=from_account.currency,
+                to_currency=to_account.currency,
+            )
+        )
     source, destination = make_transfer(
         session,
         from_account_id=data.from_account_id,

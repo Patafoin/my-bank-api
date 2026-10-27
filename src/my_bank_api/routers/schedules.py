@@ -95,6 +95,17 @@ def _check(session: Session, s: Schedule) -> None:
             raise not_found(label, ident)
     if s.transfer_account_id is not None and s.transfer_account_id == s.account_id:
         raise invalid(tr("Le compte d'un virement planifié doit être différent du compte de la planification"))
+    if s.transfer_account_id is not None:
+        account = session.get(Account, s.account_id)
+        transfer_account = session.get(Account, s.transfer_account_id)
+        if account.currency != transfer_account.currency:
+            raise invalid(
+                tr(
+                    "Le compte source est en {from_currency}, le compte cible en {to_currency} : aucune conversion n'est faite",
+                    from_currency=account.currency,
+                    to_currency=transfer_account.currency,
+                )
+            )
     if s.end_mode == ScheduleEnd.DATE:
         if s.end_date is None:
             raise invalid(tr("`end_date` est obligatoire quand `end_mode` = date"))

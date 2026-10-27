@@ -46,8 +46,9 @@ def addon_token(settings: Settings, make_session: sessionmaker[Session]) -> str:
         token = path.read_text().strip()
     else:
         token = new_token()
-        path.write_text(token)
-        path.chmod(0o600)
+        # Créé directement en 0600 : jamais lisible par un autre compte, même un instant.
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as file:
+            file.write(token)
     with make_session() as session:
         ensure_token(session, ADDON_TOKEN_NAME, token)
     return token

@@ -28,6 +28,7 @@ def account_out(account: Account, balances: dict, transaction_count: int = 0) ->
         "closed": account.closed,
         "position": account.position,
         "notes": account.notes,
+        "is_default": account.is_default,
         "balances": balances,
         "transaction_count": transaction_count,
     }

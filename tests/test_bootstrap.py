@@ -53,7 +53,9 @@ def test_addon_creates_a_token_and_announces_it(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, "supervisor", fake_supervisor)
     with TestClient(create_app(_settings(tmp_path))):
         _wait_for(calls)
-    token = (tmp_path / "data" / bootstrap.ADDON_TOKEN_FILE).read_text()
+    token_file = tmp_path / "data" / bootstrap.ADDON_TOKEN_FILE
+    token = token_file.read_text()
+    assert token_file.stat().st_mode & 0o777 == 0o600
     assert calls[-1] == (
         "POST",
         "/discovery",

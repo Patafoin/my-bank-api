@@ -18,6 +18,11 @@ if [ "$(id -u)" = "0" ]; then
         MYBANK_API_TOKEN="$(python -c 'import json; print(json.load(open("/data/options.json")).get("api_token") or "")')"
         export MYBANK_API_TOKEN
     fi
+    # Option `docs` de l'add-on (documentation interactive /docs), lue pour la même raison.
+    if [ -z "${MYBANK_DOCS:-}" ] && [ -n "${SUPERVISOR_TOKEN:-}" ] && [ -f /data/options.json ]; then
+        MYBANK_DOCS="$(python -c 'import json; print(str(bool(json.load(open("/data/options.json")).get("docs"))).lower())')"
+        export MYBANK_DOCS
+    fi
     exec setpriv --reuid=mybank --regid=mybank --init-groups -- "$@"
 fi
 exec "$@"

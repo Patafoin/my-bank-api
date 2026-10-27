@@ -25,6 +25,8 @@ class Settings:
     backup_keep_monthly: int = 12
     jobs_enabled: bool = True
     api_token: str | None = None
+    # Documentation interactive (/docs, /redoc, /openapi.json) : lisible sans jeton, donc coupée par défaut.
+    docs: bool = False
 
     @property
     def db_path(self) -> Path:
@@ -47,4 +49,5 @@ class Settings:
             backup_keep_monthly=int(env.get("MYBANK_BACKUP_KEEP_MONTHLY", "12")),
             jobs_enabled=_bool(env.get("MYBANK_JOBS_ENABLED", "true")),
             api_token=env.get("MYBANK_API_TOKEN") or (_addon_options().get("api_token") if env.get("SUPERVISOR_TOKEN") else None) or None,
+            docs=_bool(env["MYBANK_DOCS"]) if "MYBANK_DOCS" in env else bool(env.get("SUPERVISOR_TOKEN") and _addon_options().get("docs")),
         )

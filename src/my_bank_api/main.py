@@ -12,6 +12,7 @@ from .config import Settings
 from .db import make_engine, make_sessionmaker
 from .i18n import language_from_header, reset_language, set_language
 from .jobs import daily_loop
+from .limits import BodySizeLimit
 from .migrate import upgrade
 from .routers import accounts, budgets, health, imports, moves, references, schedules, shares, transactions, trees
 
@@ -49,7 +50,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description="Gestion de comptes bancaires personnels, sur le modèle de MS Comptes Bancaires. "
         "Montants en chaînes décimales (`\"-14.80\"`) ; état d'une opération : 0 non pointée, 1 pointée, 2 rapprochée.",
         lifespan=lifespan,
+        docs_url="/docs" if settings.docs else None,
+        redoc_url="/redoc" if settings.docs else None,
+        openapi_url="/openapi.json" if settings.docs else None,
     )
+    app.add_middleware(BodySizeLimit)
+
     @app.middleware("http")
     async def language(request: Request, call_next):
         # messages d'erreur dans la langue du client (l'intégration HA envoie celle de Home Assistant)
