@@ -31,6 +31,8 @@ from ..schemas import (
     AttachmentFile,
     AttachmentIn,
     AttachmentOut,
+    BulkCategorize,
+    BulkCategorizeResult,
     BulkStateChange,
     SplitIn,
     StateChange,
@@ -111,8 +113,10 @@ def _build_splits(amount: int, lines: list[SplitIn] | None, category_id=None, cl
     return splits
 
 
-def _signature(splits: list[Split]) -> list[tuple]:
-    return [(s.amount, s.category_id, s.class_id) for s in splits]
+def _signature(splits: list[Split]) -> list[int]:
+    """Ce qui affecte un solde : seuls les montants. Rubrique et classe en sont délibérément
+    exclues (décision 026) : les reclasser sur une opération rapprochée ne doit pas la verrouiller."""
+    return [s.amount for s in splits]
 
 
 # --- Lecture -------------------------------------------------------------------------------------
@@ -306,6 +310,52 @@ def set_state_bulk(data: BulkStateChange, session: Session = Depends(get_session
         tx.state = int(data.state)
     session.commit()
     return [tx_out(t) for t in sorted(found, key=lambda t: (t.date, t.id))]
+
+
+@router.post(
+    "/categorize",
+    response_model=BulkCategorizeResult,
+    summary="Change en masse la rubrique, la classe et/ou le tiers de plusieurs opérations (rapprochées comprises)",
+)
+def bulk_categorize(data: BulkCategorize, session: Session = Depends(get_session)):
+    ids = set(data.ids)
+    found = session.scalars(select(Transaction).where(Transaction.id.in_(ids))).all()
+    missing = ids - {t.id for t in found}
+    if missing:
+        raise not_found("Opération", min(missing))
+
+    values = data.model_dump(exclude={"ids"}, exclude_unset=True)
+    if "payee_name" in values:
+        values["payee_id"] = _payee_by_name(session, values.pop("payee_name"))
+    if not values:
+        raise invalid(tr("Indiquer au moins un champ à modifier (rubrique, classe ou tiers)"))
+
+    if values.get("payee_id") is not None and session.get(Payee, values["payee_id"]) is None:
+        raise not_found("Tiers", values["payee_id"])
+    for key, label, model in (("category_id", "Rubrique", Category), ("class_id", "Classe", AnalysisClass)):
+        if values.get(key) is not None and session.get(model, values[key]) is None:
+            raise not_found(label, values[key])
+
+    touches_splits = "category_id" in values or "class_id" in values
+    skipped: list[int] = []
+    for tx in found:
+        if "payee_id" in values:
+            tx.payee_id = values["payee_id"]
+        if touches_splits:
+            # Ventilée : pas de rubrique/classe unique à poser, l'opération est ignorée pour ces deux champs.
+            if len(tx.splits) != 1:
+                skipped.append(tx.id)
+                continue
+            split = tx.splits[0]
+            if "category_id" in values:
+                split.category_id = values["category_id"]
+            if "class_id" in values:
+                split.class_id = values["class_id"]
+    session.commit()
+    return BulkCategorizeResult(
+        updated=[tx_out(t) for t in sorted(found, key=lambda t: (t.date, t.id))],
+        skipped_split_ids=sorted(skipped),
+    )
 
 
 @router.delete("/{tx_id}", status_code=204, summary="Supprime l'opération (et sa jumelle s'il s'agit d'un virement)")

@@ -373,6 +373,28 @@ class BulkStateChange(Strict):
     state: TxState
 
 
+class BulkCategorize(Strict):
+    """Changement en masse de la rubrique, la classe et/ou le tiers (décision 026) : rapprochées comprises,
+    aucun de ces champs n'affecte un solde. Champ absent = inchangé ; `null` = vidé."""
+
+    ids: list[int] = Field(min_length=1, max_length=5000)
+    category_id: int | None = None
+    class_id: int | None = None
+    payee_id: int | None = None
+    payee_name: Name | None = Field(default=None, description="Tiers par son nom, créé s'il n'existe pas")
+
+    @model_validator(mode="after")
+    def _payee_exclusive(self):
+        if "payee_id" in self.model_fields_set and "payee_name" in self.model_fields_set:
+            raise ValueError(tr("`payee_id` et `payee_name` sont exclusifs"))
+        return self
+
+
+class BulkCategorizeResult(BaseModel):
+    updated: list[TransactionOut]
+    skipped_split_ids: list[int] = Field(default_factory=list, description="Opérations ventilées où la rubrique/classe n'a pas été appliquée")
+
+
 class TransferCreate(Strict):
     from_account_id: int
     to_account_id: int

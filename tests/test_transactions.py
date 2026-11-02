@@ -71,15 +71,65 @@ def test_state_transitions_and_bulk(client, make):
     assert client.patch(f"{API}/transactions/{t1['id']}/state", json={"state": 3}).status_code == 422
 
 
+def test_bulk_categorize(client, make):
+    acc = make.account()
+    cat_a, cat_b = make.category("A"), make.category("B")
+    cls = client.post(f"{API}/classes", json={"name": "K"}).json()
+    payee = client.post(f"{API}/payees", json={"name": "P"}).json()
+    t1 = make.tx(acc["id"], "-10", state=2, category_id=cat_a["id"])  # rapprochée
+    t2 = make.tx(acc["id"], "-20", category_id=cat_a["id"])
+    split_tx = make.tx(acc["id"], "-30", splits=[{"amount": "-10"}, {"amount": "-20"}])
+
+    r = client.post(f"{API}/transactions/categorize", json={"ids": [t1["id"], t2["id"]], "category_id": cat_b["id"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert {t["splits"][0]["category_id"] for t in body["updated"]} == {cat_b["id"]}
+    assert t1["state"] == body["updated"][0]["state"] == 2  # toujours rapprochée : aucun solde n'a bougé
+    assert body["skipped_split_ids"] == []
+
+    # Opération ventilée : ignorée pour rubrique/classe, mais le tiers s'applique quand même.
+    r = client.post(
+        f"{API}/transactions/categorize",
+        json={"ids": [t1["id"], split_tx["id"]], "class_id": cls["id"], "payee_id": payee["id"]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["skipped_split_ids"] == [split_tx["id"]]
+    updated_t1 = next(t for t in body["updated"] if t["id"] == t1["id"])
+    assert updated_t1["splits"][0]["class_id"] == cls["id"]
+    assert updated_t1["payee_id"] == payee["id"]
+    updated_split = next(t for t in body["updated"] if t["id"] == split_tx["id"])
+    assert updated_split["payee_id"] == payee["id"]
+    assert {s["category_id"] for s in updated_split["splits"]} == {None}
+
+    # Vider la rubrique (null) s'applique ; champ absent reste inchangé.
+    r = client.post(f"{API}/transactions/categorize", json={"ids": [t1["id"]], "category_id": None})
+    assert r.json()["updated"][0]["splits"][0]["category_id"] is None
+
+    assert client.post(f"{API}/transactions/categorize", json={"ids": [t1["id"], 999], "category_id": cat_a["id"]}).status_code == 404
+    assert client.post(f"{API}/transactions/categorize", json={"ids": [t1["id"]], "category_id": 999}).status_code == 404
+    assert client.post(f"{API}/transactions/categorize", json={"ids": [t1["id"]]}).status_code == 422
+    assert client.post(
+        f"{API}/transactions/categorize", json={"ids": [t1["id"]], "payee_id": payee["id"], "payee_name": "Autre"}
+    ).status_code == 422
+
+
 def test_reconciled_transaction_is_locked(client, make):
     acc, other = make.account(), make.account("Livret A")
     cat = make.category("C")
     tx = make.tx(acc["id"], "-10", state=2, category_id=cat["id"])
     url = f"{API}/transactions/{tx['id']}"
-    for change in ({"amount": "-11"}, {"date": "2026-01-01"}, {"account_id": other["id"]}, {"category_id": None}):
+    for change in ({"amount": "-11"}, {"date": "2026-01-01"}, {"account_id": other["id"]}):
         assert client.patch(url, json=change).status_code == 409, change
     assert client.delete(url).status_code == 409
-    assert client.patch(url, json={"label": "ok", "notes": "n", "amount": "-10"}).status_code == 200
+    # Rubrique, classe et tiers n'affectent aucun solde : modifiables même rapprochée (décision 026).
+    cls = client.post(f"{API}/classes", json={"name": "K"}).json()
+    other_cat = make.category("C2")
+    payee = client.post(f"{API}/payees", json={"name": "P"}).json()
+    r = client.patch(url, json={"category_id": other_cat["id"], "class_id": cls["id"], "payee_id": payee["id"], "label": "ok", "notes": "n", "amount": "-10"})
+    assert r.status_code == 200
+    assert r.json()["splits"][0]["category_id"] == other_cat["id"]
+    assert r.json()["splits"][0]["class_id"] == cls["id"]
     client.patch(f"{url}/state", json={"state": 0})
     assert client.patch(url, json={"amount": "-11"}).json()["splits"][0]["amount"] == "-11.00"
     assert client.delete(url).status_code == 204
