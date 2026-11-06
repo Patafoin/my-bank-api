@@ -37,7 +37,7 @@ router = APIRouter(prefix="/schedules", tags=["échéancier"])
 
 FIELDS = (
     "account_id label mode start_date unit every end_mode end_date count payee_id payment_method_id "
-    "category_id class_id transfer_account_id notes auto lead_days generate_from active"
+    "category_id class_id transfer_account_id notes auto lead_days due_days generate_from active"
 ).split()
 
 
@@ -294,7 +294,7 @@ def create_schedule(data: ScheduleCreate, session: Session = Depends(get_session
 )
 def update_schedule(schedule_id: int, data: ScheduleUpdate, session: Session = Depends(get_session)):
     values = data.model_dump(exclude_unset=True)
-    nullable = {"end_date", "count", "payee_id", "payee_name", "payment_method_id", "category_id", "class_id", "transfer_account_id", "notes"}
+    nullable = {"end_date", "count", "payee_id", "payee_name", "payment_method_id", "category_id", "class_id", "transfer_account_id", "notes", "due_days"}
     for key, value in values.items():
         if value is None and key not in nullable:
             raise invalid(tr("`{key}` ne peut pas être vide", key=key))

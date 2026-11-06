@@ -196,6 +196,8 @@ class Transaction(Timestamps, Base):
     label: Mapped[str | None] = mapped_column(String(500))
     notes: Mapped[str | None] = mapped_column(Text)
     state: Mapped[int] = mapped_column(Integer, default=TxState.NONE)
+    # Date limite de paiement (décision 027) ; None = pas de date limite, l'opération n'est jamais signalée.
+    due_date: Mapped[dt.date | None] = mapped_column(Date)
     transfer_peer_id: Mapped[int | None] = mapped_column(
         ForeignKey("transactions.id", ondelete="SET NULL"), unique=True
     )
@@ -286,6 +288,8 @@ class Schedule(Timestamps, Base):
     notes: Mapped[str | None] = mapped_column(Text)
     auto: Mapped[bool] = mapped_column(default=True)
     lead_days: Mapped[int] = mapped_column(default=0)
+    # Date limite des opérations générées = date de l'échéance + due_days ; None = pas de date limite.
+    due_days: Mapped[int | None] = mapped_column(Integer)
     generate_from: Mapped[dt.date] = mapped_column(Date)
     active: Mapped[bool] = mapped_column(default=True)
 

@@ -133,6 +133,9 @@ def list_transactions(
     include_subcategories: bool = True,
     class_id: int | None = None,
     q: str | None = Query(None, description="Texte cherché dans le libellé, les notes, le numéro et le tiers"),
+    due_before: dt.date | None = Query(
+        None, description="Seulement les opérations ayant une date limite de paiement, au plus tard ce jour-là"
+    ),
     order: Literal["asc", "desc"] = "desc",
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
@@ -155,6 +158,8 @@ def list_transactions(
         filters.append(tx.id.in_(select(Split.transaction_id).where(Split.category_id.in_(ids))))
     if class_id is not None:
         filters.append(tx.id.in_(select(Split.transaction_id).where(Split.class_id == class_id)))
+    if due_before is not None:
+        filters.append(tx.due_date <= due_before)  # exclut aussi les opérations sans date limite (NULL)
     if q:
         pattern = f"%{q.strip()}%"
         filters.append(
@@ -200,6 +205,7 @@ def create_transaction(data: TransactionCreate, session: Session = Depends(get_s
         label=data.label,
         notes=data.notes,
         state=int(data.state),
+        due_date=data.due_date,
         splits=splits,
     )
     session.add(tx)
@@ -276,7 +282,8 @@ def update_transaction(tx_id: int, data: TransactionUpdate, session: Session = D
             peer.date = new_date
 
     tx.account_id, tx.date, tx.amount = new_account, new_date, new_amount
-    for key in ("payee_id", "payment_method_id", "number", "label", "notes"):
+    # Date limite : n'affecte aucun solde, modifiable même sur une opération rapprochée.
+    for key in ("payee_id", "payment_method_id", "number", "label", "notes", "due_date"):
         if key in values:
             setattr(tx, key, values[key])
     if "state" in values:

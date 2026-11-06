@@ -287,6 +287,9 @@ class TransactionCreate(Strict):
     label: str | None = Field(default=None, max_length=500)
     notes: str | None = None
     state: TxState = TxState.NONE
+    due_date: dt.date | None = Field(
+        default=None, description="Date limite de paiement ; null = aucune (l'opération n'est jamais signalée)"
+    )
     category_id: int | None = Field(default=None, description="Raccourci quand il n'y a pas de ventilation")
     class_id: int | None = Field(default=None, description="Raccourci quand il n'y a pas de ventilation")
     splits: list[SplitIn] | None = Field(default=None, description="Ventilation ; la somme doit égaler `amount`")
@@ -313,6 +316,9 @@ class TransactionUpdate(Strict):
     label: str | None = Field(default=None, max_length=500)
     notes: str | None = None
     state: TxState | None = None
+    due_date: dt.date | None = Field(
+        default=None, description="Date limite de paiement ; null = aucune (l'opération n'est jamais signalée)"
+    )
     category_id: int | None = None
     class_id: int | None = None
     splits: list[SplitIn] | None = None
@@ -341,6 +347,7 @@ class TransactionOut(Out):
     label: str | None
     notes: str | None
     state: TxState
+    due_date: dt.date | None = Field(description="Date limite de paiement ; null = aucune")
     transfer_peer_id: int | None
     transfer_account_id: int | None = Field(description="Compte de l'autre opération d'un virement")
     splits: list[SplitOut]
@@ -440,6 +447,10 @@ class ScheduleFields(Strict):
     notes: str | None = None
     auto: bool | None = Field(default=None, description="Génération automatique des opérations à échéance")
     lead_days: int | None = Field(default=None, ge=0, le=90, description="Jours d'anticipation de la génération")
+    due_days: int | None = Field(
+        default=None, ge=0, le=365,
+        description="Date limite des opérations générées = date de l'échéance + `due_days` jours (0 = le jour même) ; null = aucune",
+    )
     generate_from: dt.date | None = Field(
         default=None, description="Les échéances antérieures ne sont jamais générées d'office (défaut : jour de création)"
     )
@@ -490,6 +501,7 @@ class ScheduleOut(Out):
     notes: str | None
     auto: bool
     lead_days: int
+    due_days: int | None
     generate_from: dt.date
     active: bool
     total_occurrences: int | None = Field(description="Nombre d'échéances ; null si sans fin")

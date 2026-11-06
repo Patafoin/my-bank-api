@@ -58,6 +58,7 @@ def tx_out(tx: Transaction) -> dict:
         "label": tx.label,
         "notes": tx.notes,
         "state": tx.state,
+        "due_date": tx.due_date,
         "transfer_peer_id": tx.transfer_peer_id,
         "transfer_account_id": tx.transfer_peer.account_id if tx.transfer_peer else None,
         "attachment": attachment_out(tx.attachment),

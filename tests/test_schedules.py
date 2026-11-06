@@ -283,3 +283,30 @@ def test_installments_limited_to_400(client, make, today):
     assert periodic.status_code == 201
     # passer un périodique de 600 en échéancier : refusé
     assert client.patch(f"{API}/schedules/{periodic.json()['id']}", json={"mode": "installments"}).status_code == 422
+
+
+def test_due_days_sets_due_date_of_generated_transactions(client, make, today):
+    acc = make.account()
+    none = _schedule(client, account_id=acc["id"], label="Sans", amount="-10", start_date="2026-10-05", generate_from="2026-10-01")
+    assert none["due_days"] is None
+    same_day = _schedule(client, account_id=acc["id"], label="Jour même", amount="-20", start_date="2026-10-05", generate_from="2026-10-01", due_days=0)
+    later = _schedule(client, account_id=acc["id"], label="Plus 10", amount="-30", start_date="2026-10-05", generate_from="2026-10-01", due_days=10)
+    assert later["due_days"] == 10
+    due = {t["label"]: t["due_date"] for t in _txs(client, acc["id"])}
+    assert due == {"Sans": None, "Jour même": "2026-10-05", "Plus 10": "2026-10-15"}
+    # Retirée : les opérations suivantes n'ont plus de date limite ; celles déjà générées gardent la leur.
+    r = client.patch(f"{API}/schedules/{later['id']}", json={"due_days": None})
+    assert r.status_code == 200 and r.json()["due_days"] is None
+    today.set(dt.date(2026, 11, 6))
+    created = client.post(f"{API}/schedules/generate").json()["created"]
+    assert {t["label"]: t["due_date"] for t in created} == {"Sans": None, "Jour même": "2026-11-05", "Plus 10": None}
+    assert client.post(f"{API}/schedules", json={"account_id": acc["id"], "label": "x", "amount": "-1", "start_date": "2026-12-01", "due_days": -1}).status_code == 422
+    assert same_day["due_days"] == 0
+
+
+def test_due_days_on_transfer_schedule_only_on_own_leg(client, make, today):
+    cc = make.account()
+    livret = make.account("Livret A", kind="savings")
+    _schedule(client, account_id=cc["id"], transfer_account_id=livret["id"], label="Épargne", amount="-100", start_date="2026-10-07", due_days=3)
+    assert _txs(client, cc["id"])[0]["due_date"] == "2026-10-10"
+    assert _txs(client, livret["id"])[0]["due_date"] is None

@@ -123,6 +123,7 @@ def generate_occurrence(session: Session, schedule: Schedule, rank: int, date: d
     ).rowcount
     if claimed != 1:
         return None
+    due_date = date + dt.timedelta(days=schedule.due_days) if schedule.due_days is not None else None
     if schedule.transfer_account_id is not None:
         outgoing = amount <= 0
         source, destination = make_transfer(
@@ -138,6 +139,7 @@ def generate_occurrence(session: Session, schedule: Schedule, rank: int, date: d
             class_id=schedule.class_id,
         )
         tx = source if outgoing else destination
+        tx.due_date = due_date  # sur la jambe du compte de la planification seulement
     else:
         tx = Transaction(
             account_id=schedule.account_id,
@@ -147,6 +149,7 @@ def generate_occurrence(session: Session, schedule: Schedule, rank: int, date: d
             payment_method_id=schedule.payment_method_id,
             label=schedule.label,
             notes=schedule.notes,
+            due_date=due_date,
             splits=[Split(amount=amount, category_id=schedule.category_id, class_id=schedule.class_id, position=0)],
         )
         session.add(tx)

@@ -364,3 +364,35 @@ class TestAttachment:
         tx = make.tx(acc["id"], "-14.80")
         client.put(f"{API}/transactions/{tx['id']}/attachment", json={"kind": "link", "url": "https://a"})
         assert client.delete(f"{API}/transactions/{tx['id']}").status_code == 204
+
+
+# --- Date limite de paiement (décision 027) ------------------------------------------------------
+
+
+def test_due_date_defaults_to_null_and_is_editable_even_when_reconciled(client, make):
+    acc = make.account()
+    tx = make.tx(acc["id"], "-50")
+    assert tx["due_date"] is None
+    tx = make.tx(acc["id"], "-80", due_date="2026-10-15")
+    assert tx["due_date"] == "2026-10-15"
+    client.patch(f"{API}/transactions/{tx['id']}/state", json={"state": 2})
+    r = client.patch(f"{API}/transactions/{tx['id']}", json={"due_date": "2026-10-20"})
+    assert r.status_code == 200 and r.json()["due_date"] == "2026-10-20"
+    r = client.patch(f"{API}/transactions/{tx['id']}", json={"due_date": None})
+    assert r.status_code == 200 and r.json()["due_date"] is None
+    # Champ absent : inchangé.
+    other = make.tx(acc["id"], "-5", due_date="2026-11-01")
+    assert client.patch(f"{API}/transactions/{other['id']}", json={"label": "x"}).json()["due_date"] == "2026-11-01"
+
+
+def test_due_before_filter_skips_transactions_without_due_date(client, make):
+    acc = make.account()
+    make.tx(acc["id"], "-1")
+    late = make.tx(acc["id"], "-2", due_date="2026-10-05")
+    soon = make.tx(acc["id"], "-3", due_date="2026-10-12")
+    make.tx(acc["id"], "-4", due_date="2026-12-01")
+    paid = make.tx(acc["id"], "-5", due_date="2026-10-06", state=1)
+    found = client.get(f"{API}/transactions", params={"due_before": "2026-10-12", "order": "asc"}).json()["items"]
+    assert {t["id"] for t in found} == {late["id"], paid["id"], soon["id"]}
+    unpaid = client.get(f"{API}/transactions", params={"due_before": "2026-10-12", "state": 0}).json()["items"]
+    assert {t["id"] for t in unpaid} == {late["id"], soon["id"]}
