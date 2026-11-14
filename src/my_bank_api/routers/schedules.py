@@ -22,6 +22,8 @@ from ..models import (
 )
 from ..money import from_cents, to_cents
 from ..schemas import (
+    AppSettingsOut,
+    AppSettingsUpdate,
     GenerateResult,
     OccurrenceGrid,
     OccurrenceList,
@@ -37,7 +39,7 @@ router = APIRouter(prefix="/schedules", tags=["échéancier"])
 
 FIELDS = (
     "account_id label mode start_date unit every end_mode end_date count payee_id payment_method_id "
-    "category_id class_id transfer_account_id notes auto lead_days due_days generate_from active"
+    "category_id class_id transfer_account_id notes auto lead_days use_global_lead_days due_days generate_from active"
 ).split()
 
 
@@ -214,6 +216,24 @@ def upcoming(
     return items
 
 
+@router.get(
+    "/settings",
+    response_model=AppSettingsOut,
+    summary="Réglage global de la saisie automatique, ancrée sur le mois (voir `use_global_lead_days`)",
+)
+def get_settings(session: Session = Depends(get_session)):
+    return sched.get_app_settings(session)
+
+
+@router.patch("/settings", response_model=AppSettingsOut)
+def update_settings(data: AppSettingsUpdate, session: Session = Depends(get_session)):
+    settings = sched.get_app_settings(session)
+    for key, value in data.model_dump(exclude_unset=True).items():
+        setattr(settings, key, value)
+    session.commit()
+    return settings
+
+
 @router.get("/{schedule_id}", response_model=ScheduleOut)
 def get_schedule(schedule_id: int, session: Session = Depends(get_session)):
     return _out(_get(session, schedule_id))
@@ -271,6 +291,7 @@ def create_schedule(data: ScheduleCreate, session: Session = Depends(get_session
         end_mode=data.end_mode,
         auto=data.auto,
         lead_days=data.lead_days,
+        use_global_lead_days=data.use_global_lead_days,
         active=data.active,
         generate_from=data.generate_from or sched.today(),
         occurrences=[],

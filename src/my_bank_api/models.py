@@ -288,6 +288,8 @@ class Schedule(Timestamps, Base):
     notes: Mapped[str | None] = mapped_column(Text)
     auto: Mapped[bool] = mapped_column(default=True)
     lead_days: Mapped[int] = mapped_column(default=0)
+    # Si vrai, ignore `lead_days` : la génération suit le réglage global (`AppSettings`), ancré sur le mois.
+    use_global_lead_days: Mapped[bool] = mapped_column(default=False)
     # Date limite des opérations générées = date de l'échéance + due_days ; None = pas de date limite.
     due_days: Mapped[int | None] = mapped_column(Integer)
     generate_from: Mapped[dt.date] = mapped_column(Date)
@@ -321,6 +323,21 @@ class ScheduleOccurrence(Base):
     transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id", ondelete="SET NULL"))
 
     schedule: Mapped[Schedule] = relationship(back_populates="occurrences")
+
+
+class AppSettings(Base):
+    """Réglages globaux de l'application : une seule ligne (id = 1), créée par la migration 0007.
+
+    `auto_entry_days_before_month_start` : jours avant le 1er du mois de l'échéance à partir desquels
+    une planification qui s'y réfère (`Schedule.use_global_lead_days`) est générée, à la place de son
+    propre `lead_days`.
+    """
+
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    auto_entry_enabled: Mapped[bool] = mapped_column(default=False)
+    auto_entry_days_before_month_start: Mapped[int] = mapped_column(default=0)
 
 
 class Budget(Timestamps, Base):

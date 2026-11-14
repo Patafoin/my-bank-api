@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .models import OccurrenceStatus, Schedule, ScheduleEnd, ScheduleOccurrence, Split, Transaction
+from .models import AppSettings, OccurrenceStatus, Schedule, ScheduleEnd, ScheduleOccurrence, Split, Transaction
 from .operations import make_transfer
 
 log = logging.getLogger(__name__)
@@ -165,11 +165,35 @@ def generate_occurrence(session: Session, schedule: Schedule, rank: int, date: d
     return tx
 
 
+def get_app_settings(session: Session) -> AppSettings:
+    """Réglages globaux (une seule ligne, id = 1), créée par la migration 0007 ; recréée ici en garde-fou."""
+    settings = session.get(AppSettings, 1)
+    if settings is None:
+        settings = AppSettings(id=1)
+        session.add(settings)
+        session.flush()
+    return settings
+
+
+def _generation_horizon(schedule: Schedule, today_: dt.date, app_settings: AppSettings) -> dt.date:
+    """Dernière date d'échéance à générer maintenant.
+
+    Normalement : `lead_days` jours avant aujourd'hui. Si la planification suit le réglage global
+    (`use_global_lead_days`) et que celui-ci est actif : toutes les échéances du mois deviennent dues
+    dès que `auto_entry_days_before_month_start` jours avant son 1er sont passés — équivalent à
+    comparer la date à la fin du mois atteint par `aujourd'hui + ce nombre de jours`.
+    """
+    if schedule.use_global_lead_days and app_settings.auto_entry_enabled:
+        cutoff = today_ + dt.timedelta(days=app_settings.auto_entry_days_before_month_start)
+        return dt.date(cutoff.year, cutoff.month, calendar.monthrange(cutoff.year, cutoff.month)[1])
+    return today_ + dt.timedelta(days=schedule.lead_days)
+
+
 def generate_for(session: Session, schedule: Schedule, on: dt.date | None = None) -> list[Transaction]:
     """Génère les échéances dues d'une planification active et automatique (date ≤ jour + anticipation)."""
     if not (schedule.active and schedule.auto):
         return []
-    horizon = (on or today()) + dt.timedelta(days=schedule.lead_days)
+    horizon = _generation_horizon(schedule, on or today(), get_app_settings(session))
     done = {o.rank for o in schedule.occurrences if o.status != OccurrenceStatus.PENDING}
     created = []
     for rank, date in iter_ranks(schedule, until=horizon):

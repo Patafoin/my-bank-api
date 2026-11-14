@@ -447,6 +447,10 @@ class ScheduleFields(Strict):
     notes: str | None = None
     auto: bool | None = Field(default=None, description="Génération automatique des opérations à échéance")
     lead_days: int | None = Field(default=None, ge=0, le=90, description="Jours d'anticipation de la génération")
+    use_global_lead_days: bool | None = Field(
+        default=None,
+        description="Ignore `lead_days` : suit le réglage global (jours avant le 1er du mois, voir `/schedules/settings`)",
+    )
     due_days: int | None = Field(
         default=None, ge=0, le=365,
         description="Date limite des opérations générées = date de l'échéance + `due_days` jours (0 = le jour même) ; null = aucune",
@@ -474,6 +478,7 @@ class ScheduleCreate(ScheduleFields):
     end_mode: ScheduleEnd = ScheduleEnd.NEVER
     auto: bool = True
     lead_days: int = Field(default=0, ge=0, le=90)
+    use_global_lead_days: bool = False
     active: bool = True
 
 
@@ -501,6 +506,7 @@ class ScheduleOut(Out):
     notes: str | None
     auto: bool
     lead_days: int
+    use_global_lead_days: bool
     due_days: int | None
     generate_from: dt.date
     active: bool
@@ -554,6 +560,16 @@ class UpcomingOccurrence(BaseModel):
 
 class GenerateResult(BaseModel):
     created: list[TransactionOut]
+
+
+class AppSettingsOut(Out):
+    auto_entry_enabled: bool = Field(description="Règle globale active : les planifications qui s'y réfèrent la suivent")
+    auto_entry_days_before_month_start: int = Field(description="Jours avant le 1er du mois de l'échéance")
+
+
+class AppSettingsUpdate(Strict):
+    auto_entry_enabled: bool | None = None
+    auto_entry_days_before_month_start: int | None = Field(default=None, ge=0, le=90)
 
 
 # --- Budgets -------------------------------------------------------------------------------------

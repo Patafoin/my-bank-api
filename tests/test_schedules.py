@@ -118,6 +118,37 @@ def test_lead_days_and_manual_mode(client, make, today):
     assert client.post(f"{API}/schedules/{manual['id']}/occurrences/1/generate").status_code == 409
 
 
+def test_schedule_settings_defaults_and_partial_update(client):
+    r = client.get(f"{API}/schedules/settings")
+    assert r.status_code == 200
+    assert r.json() == {"auto_entry_enabled": False, "auto_entry_days_before_month_start": 0}
+    r = client.patch(f"{API}/schedules/settings", json={"auto_entry_enabled": True, "auto_entry_days_before_month_start": 5})
+    assert r.status_code == 200
+    assert r.json() == {"auto_entry_enabled": True, "auto_entry_days_before_month_start": 5}
+    # Partiel : ne touche pas à l'autre champ.
+    r = client.patch(f"{API}/schedules/settings", json={"auto_entry_days_before_month_start": 7})
+    assert r.json() == {"auto_entry_enabled": True, "auto_entry_days_before_month_start": 7}
+
+
+def test_use_global_lead_days_falls_back_to_own_lead_days_when_global_disabled(client, make, today):
+    acc = make.account()
+    # Réglage global désactivé (par défaut) : la planification suit son propre lead_days (0 ici).
+    s = _schedule(client, account_id=acc["id"], label="Loyer", amount="-700", start_date="2026-10-10", use_global_lead_days=True)
+    assert s["generated"] == 0  # 10/10 > 07/10 + 0 jour
+
+
+def test_use_global_lead_days_anchors_on_month_start(client, make, today):
+    acc = make.account()
+    client.patch(f"{API}/schedules/settings", json={"auto_entry_enabled": True, "auto_entry_days_before_month_start": 5})
+    s = _schedule(client, account_id=acc["id"], label="Loyer", amount="-700", start_date="2026-11-15", use_global_lead_days=True, lead_days=0)
+    assert s["generated"] == 0  # 07/10 + 5 jours reste en octobre : novembre pas encore concerné
+    today.set(dt.date(2026, 10, 26))  # 10-26 + 5 jours = 10-31 : encore octobre
+    assert client.post(f"{API}/schedules/generate").json()["created"] == []
+    today.set(dt.date(2026, 10, 27))  # 10-27 + 5 jours = 11-01 : novembre atteint, tout son mois devient dû
+    created = client.post(f"{API}/schedules/generate").json()["created"]
+    assert [t["date"] for t in created] == ["2026-11-15"]
+
+
 def test_skip_and_restore(client, make, today):
     acc = make.account()
     s = _schedule(client, account_id=acc["id"], label="Assurance", amount="-50", start_date="2026-11-01")
