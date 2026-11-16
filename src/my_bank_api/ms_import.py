@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import trees
+from . import profiles, trees
 from .balances import account_balances
 from .i18n import tr
 from .models import Account, AnalysisClass, Category, Payee, PaymentMethod, Split, Transaction, TxState
@@ -244,8 +244,10 @@ def _category_kind(root: str, net: int) -> str:
     return "income" if net > 0 else "expense"
 
 
-def run_import(session: Session, files: list[QifFile], payees_csv: str | None = None) -> dict:
-    """Import dans la session courante ; l'appelant valide (commit) ou annule (simulation)."""
+def run_import(session: Session, files: list[QifFile], payees_csv: str | None = None, profile_id: int | None = None) -> dict:
+    """Import dans la session courante, dans un profil (par défaut le premier) ; l'appelant valide (commit) ou annule (simulation)."""
+    if profile_id is None:
+        profile_id = profiles.default_id(session)
     if not files and payees_csv is None:
         raise ImportFileError(tr("rien à importer"))
     names = [f.account.strip() for f in files]
@@ -271,9 +273,11 @@ def run_import(session: Session, files: list[QifFile], payees_csv: str | None = 
     # Comptes : créés s'ils n'existent pas, et forcément vides (import de migration).
     accounts: dict[str, Account] = {}
     for name in parsed:
-        account = session.scalar(select(Account).where(func.lower(Account.name) == name.lower()))
+        account = session.scalar(
+            select(Account).where(Account.profile_id == profile_id, func.lower(Account.name) == name.lower())
+        )
         if account is None:
-            account = Account(name=name, kind=_account_kind(name))
+            account = Account(profile_id=profile_id, name=name, kind=_account_kind(name))
             session.add(account)
             session.flush()
             report["created"]["accounts"] += 1
@@ -289,7 +293,7 @@ def run_import(session: Session, files: list[QifFile], payees_csv: str | None = 
                 if s.category:
                     nets[s.category.split(":")[0].strip()] += s.amount
     category_ids: dict[str, int] = {}
-    nodes = trees.load(session, Category)
+    nodes = trees.load(session, Category, profile_id)
     by_path = {path.replace(" > ", ":").casefold(): node for node, path, _ in trees.ordered(nodes)}
     all_paths = sorted({s.category for rs in parsed.values() for r in rs for s in r.splits if s.category})
     for full in all_paths:
@@ -300,7 +304,7 @@ def run_import(session: Session, files: list[QifFile], payees_csv: str | None = 
             node = by_path.get(key)
             if node is None:
                 kind = parent.kind if parent else _category_kind(parts[0], nets[parts[0]])
-                node = Category(name=parts[depth], parent_id=parent.id if parent else None, kind=kind)
+                node = Category(profile_id=profile_id, name=parts[depth], parent_id=parent.id if parent else None, kind=kind)
                 session.add(node)
                 session.flush()
                 by_path[key] = node
@@ -310,11 +314,16 @@ def run_import(session: Session, files: list[QifFile], payees_csv: str | None = 
 
     # Classes (champ « A » de MS, hypothèse H4) : une classe racine par valeur.
     class_ids: dict[str, int] = {}
-    existing_classes = {c.name.casefold(): c for c in session.scalars(select(AnalysisClass).where(AnalysisClass.parent_id.is_(None)))}
+    existing_classes = {
+        c.name.casefold(): c
+        for c in session.scalars(
+            select(AnalysisClass).where(AnalysisClass.profile_id == profile_id, AnalysisClass.parent_id.is_(None))
+        )
+    }
     for name in sorted({c for rs in parsed.values() for r in rs for c in r.classes}):
         node = existing_classes.get(name.casefold())
         if node is None:
-            node = AnalysisClass(name=name)
+            node = AnalysisClass(profile_id=profile_id, name=name)
             session.add(node)
             session.flush()
             report["created"]["classes"] += 1
@@ -331,7 +340,7 @@ def run_import(session: Session, files: list[QifFile], payees_csv: str | None = 
             report["created"]["payment_methods"] += 1
 
     # Tiers : liste complète d'abord (fiches), puis ceux des opérations absents de la liste.
-    payee_ids = {p.name.casefold(): p.id for p in session.scalars(select(Payee))}
+    payee_ids = {p.name.casefold(): p.id for p in session.scalars(select(Payee).where(Payee.profile_id == profile_id))}
     if payees_csv is not None:
         for values in parse_payees(payees_csv):
             default_category = values.pop("_default_category", None)
@@ -342,14 +351,14 @@ def run_import(session: Session, files: list[QifFile], payees_csv: str | None = 
                 values["default_category_id"] = category_ids.get(default_category) or (
                     by_path[default_category.casefold()].id if default_category.casefold() in by_path else None
                 )
-            payee = Payee(**values)
+            payee = Payee(profile_id=profile_id, **values)
             session.add(payee)
             session.flush()
             payee_ids[payee.name.casefold()] = payee.id
             report["created"]["payees"] += 1
     for name in sorted({r.payee for rs in parsed.values() for r in rs if r.payee}):
         if name.casefold() not in payee_ids:
-            payee = Payee(name=name)
+            payee = Payee(profile_id=profile_id, name=name)
             session.add(payee)
             session.flush()
             payee_ids[name.casefold()] = payee.id

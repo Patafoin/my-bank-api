@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import Field
 from sqlalchemy.orm import Session
 
+from .. import profiles as prof
 from ..db import get_session
 from ..errors import invalid
 from ..i18n import tr
@@ -23,6 +24,7 @@ class MsImportIn(Strict):
     files: list[QifIn] = Field(default_factory=list)
     payees_csv_base64: str | None = Field(None, description="Export CSV des tiers de MS Comptes Bancaires, en base64")
     dry_run: bool = Field(True, description="Simulation : rien n'est enregistré, le rapport est quand même calculé")
+    profile_id: int | None = Field(None, description="Profil où tout est importé (décision 028) ; par défaut le premier")
 
 
 def _b64(value: str, what: str) -> str:
@@ -42,7 +44,7 @@ def import_ms(data: MsImportIn, session: Session = Depends(get_session)) -> dict
     files = [QifFile(f.account, _b64(f.content_base64, f.account)) for f in data.files]
     payees = _b64(data.payees_csv_base64, "tiers") if data.payees_csv_base64 else None
     try:
-        report = run_import(session, files, payees)
+        report = run_import(session, files, payees, prof.resolve(session, data.profile_id))
     except ImportFileError as err:
         session.rollback()
         raise invalid(str(err)) from err

@@ -33,6 +33,31 @@ class Balances(BaseModel):
     reconciled: Money = Field(description="Opérations rapprochées")
 
 
+# --- Profils (décision 028) ----------------------------------------------------------------------
+
+
+class ProfileCreate(Strict):
+    name: Name
+    position: int = 0
+
+
+class ProfileUpdate(Strict):
+    name: Name | None = None
+    position: int | None = None
+
+
+class ProfileOut(Out):
+    id: int
+    name: str
+    position: int
+    is_default: bool = Field(description="Premier profil (ordre puis identifiant) : celui des créations sans profil précisé")
+    accounts: int
+    categories: int
+    classes: int
+    payees: int
+    transactions: int = Field(default=0, description="Opérations des comptes du profil")
+
+
 # --- Comptes -------------------------------------------------------------------------------------
 
 
@@ -51,6 +76,7 @@ class AccountBase(Strict):
 
 class AccountCreate(AccountBase):
     name: Name
+    profile_id: int | None = Field(default=None, description="Profil (décision 028) ; par défaut le premier. Non modifiable ensuite")
 
 
 class AccountUpdate(Strict):
@@ -69,6 +95,7 @@ class AccountUpdate(Strict):
 
 class AccountOut(Out):
     id: int
+    profile_id: int
     name: str
     kind: AccountKind
     number: str | None
@@ -94,6 +121,7 @@ class AccountBalancesOut(Balances):
 
 class CategoryCreate(Strict):
     name: Name
+    profile_id: int | None = Field(default=None, description="Profil (décision 028) ; par défaut celui du parent, sinon le premier. Non modifiable ensuite")
     parent_id: int | None = None
     kind: CategoryKind | None = Field(default=None, description="Obligatoire pour une rubrique racine, hérité sinon")
     active: bool = True
@@ -110,6 +138,7 @@ class CategoryUpdate(Strict):
 
 class CategoryOut(Out):
     id: int
+    profile_id: int
     parent_id: int | None
     name: str
     kind: CategoryKind
@@ -122,6 +151,7 @@ class CategoryOut(Out):
 
 class ClassCreate(Strict):
     name: Name
+    profile_id: int | None = Field(default=None, description="Profil (décision 028) ; par défaut celui du parent, sinon le premier. Non modifiable ensuite")
     parent_id: int | None = None
     active: bool = True
     position: int = 0
@@ -136,6 +166,7 @@ class ClassUpdate(Strict):
 
 class ClassOut(Out):
     id: int
+    profile_id: int
     parent_id: int | None
     name: str
     active: bool
@@ -204,6 +235,7 @@ class PayeeFields(Strict):
 
 class PayeeCreate(PayeeFields):
     name: Name
+    profile_id: int | None = Field(default=None, description="Profil (décision 028) ; par défaut le premier. Non modifiable ensuite")
     active: bool = True
 
 
@@ -215,6 +247,7 @@ class PayeeUpdate(PayeeFields):
 class PayeeOut(PayeeFields, Out):
     model_config = ConfigDict(from_attributes=True, extra="ignore")
     id: int
+    profile_id: int
     name: str
     active: bool
     transaction_count: int = Field(default=0, description="Opérations rattachées à ce tiers")

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
+from .. import profiles as prof
 from .. import trees
 from ..db import get_session
 from ..errors import conflict, invalid, not_found
@@ -23,9 +24,31 @@ def _counts(session: Session, model) -> dict[int, int]:
     return dict(rows.all())
 
 
-def _list(session: Session, model) -> list[dict]:
+def _list(session: Session, model, profile_id: int | None = None) -> list[dict]:
     counts = _counts(session, model)
-    return [_row(n, p, d, counts) for n, p, d in trees.ordered(trees.load(session, model))]
+    return [_row(n, p, d, counts) for n, p, d in trees.ordered(trees.load(session, model, profile_id))]
+
+
+def _new_node_profile(session: Session, model, parent_id: int | None, profile_id: int | None) -> int:
+    """Profil d'un nouveau nœud : celui de son parent, sinon celui demandé, sinon le profil par défaut."""
+    if parent_id is None:
+        return prof.resolve(session, profile_id)
+    parent = session.get(model, parent_id)
+    if parent is None:
+        raise not_found(trees.LABELS[model], parent_id)
+    if profile_id is not None:
+        prof.check_refs(session, profile_id, [(model, parent_id)])
+    return parent.profile_id
+
+
+def _existing(session: Session, model, node_id: int, parent_id: int | None) -> tuple[dict, object]:
+    """Nœuds du profil de `node_id`, et ce nœud ; un nouveau parent doit être du même profil."""
+    node = session.get(model, node_id)
+    if node is None:
+        raise not_found(trees.LABELS[model], node_id)
+    prof.check_refs(session, node.profile_id, [(model, parent_id)])
+    nodes = trees.load(session, model, node.profile_id)
+    return nodes, nodes[node_id]
 
 
 def _out(session: Session, model, node_id: int) -> dict:
@@ -38,6 +61,7 @@ def _out(session: Session, model, node_id: int) -> dict:
 def _row(node, path: str, depth: int, counts: dict[int, int]) -> dict:
     row = {
         "id": node.id,
+        "profile_id": node.profile_id,
         "parent_id": node.parent_id,
         "name": node.name,
         "active": node.active,
@@ -75,8 +99,11 @@ def _delete(session: Session, model, node_id: int, split_column) -> Response:
 
 
 @categories.get("", response_model=list[CategoryOut], summary="Rubriques, à plat, dans l'ordre de l'arborescence")
-def list_categories(session: Session = Depends(get_session)):
-    return _list(session, Category)
+def list_categories(
+    profile_id: int | None = Query(None, description="Seulement les rubriques de ce profil"),
+    session: Session = Depends(get_session),
+):
+    return _list(session, Category, profile_id)
 
 
 @categories.get("/{category_id}", response_model=CategoryOut)
@@ -86,7 +113,8 @@ def get_category(category_id: int, session: Session = Depends(get_session)):
 
 @categories.post("", response_model=CategoryOut, status_code=201)
 def create_category(data: CategoryCreate, session: Session = Depends(get_session)):
-    nodes = trees.load(session, Category)
+    profile_id = _new_node_profile(session, Category, data.parent_id, data.profile_id)
+    nodes = trees.load(session, Category, profile_id)
     trees.check_parent(nodes, Category, None, data.parent_id)
     trees.check_unique_name(nodes, Category, None, data.parent_id, data.name)
     if data.parent_id is None:
@@ -97,7 +125,9 @@ def create_category(data: CategoryCreate, session: Session = Depends(get_session
         kind = nodes[data.parent_id].kind
         if data.kind is not None and data.kind != kind:
             raise invalid(tr("Une sous-rubrique hérite du type de son parent ({kind})", kind=kind))
-    node = Category(name=data.name, parent_id=data.parent_id, kind=kind, active=data.active, position=data.position)
+    node = Category(
+        profile_id=profile_id, name=data.name, parent_id=data.parent_id, kind=kind, active=data.active, position=data.position
+    )
     session.add(node)
     session.commit()
     return _out(session, Category, node.id)
@@ -105,10 +135,7 @@ def create_category(data: CategoryCreate, session: Session = Depends(get_session
 
 @categories.patch("/{category_id}", response_model=CategoryOut)
 def update_category(category_id: int, data: CategoryUpdate, session: Session = Depends(get_session)):
-    nodes = trees.load(session, Category)
-    node = nodes.get(category_id)
-    if node is None:
-        raise not_found("Rubrique", category_id)
+    nodes, node = _existing(session, Category, category_id, data.parent_id)
     fields = data.model_fields_set
     parent_id = data.parent_id if "parent_id" in fields else node.parent_id
     name = data.name if data.name is not None else node.name
@@ -148,8 +175,11 @@ def delete_category(category_id: int, session: Session = Depends(get_session)):
 
 
 @classes.get("", response_model=list[ClassOut], summary="Classes, à plat, dans l'ordre de l'arborescence")
-def list_classes(session: Session = Depends(get_session)):
-    return _list(session, AnalysisClass)
+def list_classes(
+    profile_id: int | None = Query(None, description="Seulement les classes de ce profil"),
+    session: Session = Depends(get_session),
+):
+    return _list(session, AnalysisClass, profile_id)
 
 
 @classes.get("/{class_id}", response_model=ClassOut)
@@ -159,10 +189,11 @@ def get_class(class_id: int, session: Session = Depends(get_session)):
 
 @classes.post("", response_model=ClassOut, status_code=201)
 def create_class(data: ClassCreate, session: Session = Depends(get_session)):
-    nodes = trees.load(session, AnalysisClass)
+    profile_id = _new_node_profile(session, AnalysisClass, data.parent_id, data.profile_id)
+    nodes = trees.load(session, AnalysisClass, profile_id)
     trees.check_parent(nodes, AnalysisClass, None, data.parent_id)
     trees.check_unique_name(nodes, AnalysisClass, None, data.parent_id, data.name)
-    node = AnalysisClass(**data.model_dump())
+    node = AnalysisClass(**{**data.model_dump(), "profile_id": profile_id})
     session.add(node)
     session.commit()
     return _out(session, AnalysisClass, node.id)
@@ -170,10 +201,7 @@ def create_class(data: ClassCreate, session: Session = Depends(get_session)):
 
 @classes.patch("/{class_id}", response_model=ClassOut)
 def update_class(class_id: int, data: ClassUpdate, session: Session = Depends(get_session)):
-    nodes = trees.load(session, AnalysisClass)
-    node = nodes.get(class_id)
-    if node is None:
-        raise not_found("Classe", class_id)
+    nodes, node = _existing(session, AnalysisClass, class_id, data.parent_id)
     fields = data.model_fields_set
     parent_id = data.parent_id if "parent_id" in fields else node.parent_id
     name = data.name if data.name is not None else node.name

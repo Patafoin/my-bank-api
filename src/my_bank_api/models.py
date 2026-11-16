@@ -88,16 +88,32 @@ class TxState(enum.IntEnum):
     RECONCILED = 2
 
 
+class Profile(Timestamps, Base):
+    """Profil (décision 028) : un jeu séparé de comptes, rubriques, classes et tiers. Aucune notion de droits."""
+
+    __tablename__ = "profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    position: Mapped[int] = mapped_column(default=0)
+
+
+def _profile_column() -> Mapped[int]:
+    return mapped_column(ForeignKey("profiles.id", ondelete="RESTRICT"), index=True)
+
+
 class Account(Timestamps, Base):
     __tablename__ = "accounts"
     __table_args__ = (
         CheckConstraint("kind IN ('checking','savings','card','cash','other')", name="kind"),
-        # Un seul compte à la fois peut être par défaut (index partiel : ne contraint que is_default = true).
-        Index("uq_accounts_is_default", "is_default", unique=True, sqlite_where=text("is_default")),
+        UniqueConstraint("profile_id", "name"),
+        # Un seul compte par défaut à la fois dans un profil (index partiel : ne contraint que is_default = true).
+        Index("uq_accounts_is_default", "profile_id", "is_default", unique=True, sqlite_where=text("is_default")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    profile_id: Mapped[int] = _profile_column()
+    name: Mapped[str] = mapped_column(String(100))
     kind: Mapped[str] = mapped_column(String(20), default=AccountKind.CHECKING)
     number: Mapped[str | None] = mapped_column(String(50))
     iban: Mapped[str | None] = mapped_column(String(50))
@@ -115,6 +131,7 @@ class Category(Timestamps, Base):
     __table_args__ = (CheckConstraint("kind IN ('income','expense','savings')", name="kind"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = _profile_column()
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     kind: Mapped[str] = mapped_column(String(10))
@@ -126,6 +143,7 @@ class AnalysisClass(Timestamps, Base):
     __tablename__ = "classes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = _profile_column()
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("classes.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     active: Mapped[bool] = mapped_column(default=True)
@@ -143,9 +161,11 @@ class PaymentMethod(Timestamps, Base):
 
 class Payee(Timestamps, Base):
     __tablename__ = "payees"
+    __table_args__ = (UniqueConstraint("profile_id", "name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    profile_id: Mapped[int] = _profile_column()
+    name: Mapped[str] = mapped_column(String(100))
     short_name: Mapped[str | None] = mapped_column(String(50))
     default_category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="SET NULL"))
     payee_category: Mapped[str | None] = mapped_column(String(50))

@@ -8,10 +8,11 @@ pour une rubrique de dépense). Sens d'une rubrique sur un compte : recette = en
 import datetime as dt
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .. import profiles as prof
 from .. import trees
 from ..db import get_session
 from ..errors import conflict, invalid, not_found
@@ -62,8 +63,9 @@ def _out(budget: Budget) -> dict:
 
 
 def _check(session: Session, budget: Budget) -> None:
-    if session.get(Account, budget.account_id) is None:
-        raise not_found("Compte", budget.account_id)
+    # Montants déjà posés (changement de compte, copie) : rubriques du profil du compte (décision 028).
+    profile_id = prof.account_profile(session, budget.account_id)
+    prof.check_refs(session, profile_id, [(Category, cid) for cid in {line.category_id for line in budget.lines}])
     end = add_months(budget.start_month, budget.months)
     for other in session.scalars(select(Budget).where(Budget.account_id == budget.account_id, Budget.id != budget.id)):
         if other.start_month < end and budget.start_month < add_months(other.start_month, other.months):
@@ -87,11 +89,14 @@ def direction(kind: str, account_kind: str) -> int:
 def list_budgets(
     account_id: int | None = None,
     include_archived: bool = True,
+    profile_id: int | None = Query(None, description="Seulement les budgets des comptes de ce profil"),
     session: Session = Depends(get_session),
 ):
     stmt = select(Budget).order_by(Budget.start_month.desc(), Budget.name)
     if account_id is not None:
         stmt = stmt.where(Budget.account_id == account_id)
+    if profile_id is not None:
+        stmt = stmt.where(Budget.account_id.in_(select(Account.id).where(Account.profile_id == profile_id)))
     if not include_archived:
         stmt = stmt.where(Budget.archived.is_(False))
     return [_out(b) for b in session.scalars(stmt)]
@@ -155,12 +160,12 @@ def copy_budget(budget_id: int, data: BudgetCopy, session: Session = Depends(get
         source_budget_id=source.id,
         notes=source.notes,
     )
-    _check(session, copy)
     offsets = {m: i for i, m in enumerate(_months(source))}
     for line in source.lines:
         index = offsets[line.month]
         if index < copy.months:
             copy.lines.append(BudgetLine(category_id=line.category_id, month=add_months(copy.start_month, index), amount=line.amount))
+    _check(session, copy)
     session.add(copy)
     session.commit()
     return _out(copy)
@@ -191,7 +196,7 @@ def get_lines(budget_id: int, session: Session = Depends(get_session)):
 def set_lines(budget_id: int, data: BudgetLines, session: Session = Depends(get_session)):
     budget = _get(session, budget_id)
     months = set(_months(budget))
-    categories = trees.load(session, Category)
+    categories = trees.load(session, Category, prof.account_profile(session, budget.account_id))
     cells = {}
     for line in data.lines:
         if line.category_id not in categories:
@@ -253,7 +258,7 @@ def report(budget_id: int, session: Session = Depends(get_session)):
     for category_id, month, total in session.execute(stmt):
         own_actual[category_id][index[month]] += total
 
-    nodes = trees.load(session, Category)
+    nodes = trees.load(session, Category, account.profile_id)
     ordered = trees.ordered(nodes)
     children = defaultdict(list)
     for node in nodes.values():

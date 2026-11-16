@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from .. import profiles as prof
 from .. import trees
 from ..db import get_session
 from ..errors import conflict, invalid, not_found
@@ -65,34 +66,35 @@ def _get(session: Session, tx_id: int) -> Transaction:
 
 def _check_refs(
     session: Session,
+    account_id: int,
     *,
-    account_id: int | None = None,
     payee_id: int | None = None,
     payment_method_id: int | None = None,
     splits: list[Split] = (),
-) -> None:
-    for model, label, ident in (
-        (Account, "Compte", account_id),
-        (Payee, "Tiers", payee_id),
-        (PaymentMethod, "Mode de règlement", payment_method_id),
-    ):
-        if ident is not None and session.get(model, ident) is None:
-            raise not_found(label, ident)
+) -> int:
+    """Le compte existe ; tiers, rubriques et classes existent et sont de son profil (décision 028).
+
+    Renvoie le profil du compte.
+    """
+    profile_id = prof.account_profile(session, account_id)
+    if payment_method_id is not None and session.get(PaymentMethod, payment_method_id) is None:
+        raise not_found("Mode de règlement", payment_method_id)
+    refs = [(Payee, payee_id)]
     for split in splits:
-        if split.category_id is not None and session.get(Category, split.category_id) is None:
-            raise not_found("Rubrique", split.category_id)
-        if split.class_id is not None and session.get(AnalysisClass, split.class_id) is None:
-            raise not_found("Classe", split.class_id)
+        refs += [(Category, split.category_id), (AnalysisClass, split.class_id)]
+    prof.check_refs(session, profile_id, refs)
+    return profile_id
 
 
-def _payee_by_name(session: Session, name: str | None) -> int | None:
+def _payee_by_name(session: Session, profile_id: int, name: str | None) -> int | None:
+    """Tiers de ce nom dans le profil (casse ignorée), créé s'il n'existe pas."""
     if name is None:
         return None
     wanted = name.strip().casefold()
-    for payee in session.scalars(select(Payee)):
+    for payee in session.scalars(select(Payee).where(Payee.profile_id == profile_id)):
         if payee.name.casefold() == wanted:
             return payee.id
-    payee = Payee(name=name.strip())
+    payee = Payee(profile_id=profile_id, name=name.strip())
     session.add(payee)
     session.flush()
     return payee.id
@@ -136,6 +138,7 @@ def list_transactions(
     due_before: dt.date | None = Query(
         None, description="Seulement les opérations ayant une date limite de paiement, au plus tard ce jour-là"
     ),
+    profile_id: int | None = Query(None, description="Seulement les opérations des comptes de ce profil"),
     order: Literal["asc", "desc"] = "desc",
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
@@ -145,6 +148,8 @@ def list_transactions(
     filters = []
     if account_id is not None:
         filters.append(tx.account_id == account_id)
+    if profile_id is not None:
+        filters.append(tx.account_id.in_(select(Account.id).where(Account.profile_id == profile_id)))
     if start is not None:
         filters.append(tx.date >= start)
     if end is not None:
@@ -188,9 +193,9 @@ def get_transaction(tx_id: int, session: Session = Depends(get_session)):
 def create_transaction(data: TransactionCreate, session: Session = Depends(get_session)):
     amount = to_cents(data.amount)
     splits = _build_splits(amount, data.splits, data.category_id, data.class_id)
-    _check_refs(
+    profile_id = _check_refs(
         session,
-        account_id=data.account_id,
+        data.account_id,
         payee_id=data.payee_id,
         payment_method_id=data.payment_method_id,
         splits=splits,
@@ -199,7 +204,7 @@ def create_transaction(data: TransactionCreate, session: Session = Depends(get_s
         account_id=data.account_id,
         date=data.date,
         amount=amount,
-        payee_id=data.payee_id if data.payee_name is None else _payee_by_name(session, data.payee_name),
+        payee_id=data.payee_id if data.payee_name is None else _payee_by_name(session, profile_id, data.payee_name),
         payment_method_id=data.payment_method_id,
         number=data.number,
         label=data.label,
@@ -221,11 +226,12 @@ def create_transaction(data: TransactionCreate, session: Session = Depends(get_s
 def update_transaction(tx_id: int, data: TransactionUpdate, session: Session = Depends(get_session)):
     tx = _get(session, tx_id)
     values = data.model_dump(exclude_unset=True)
-    if "payee_name" in values:
-        values["payee_id"] = _payee_by_name(session, values.pop("payee_name"))
     for required in ("account_id", "date", "amount", "state"):
         if required in values and values[required] is None:
             raise invalid(tr("`{key}` ne peut pas être vide", key=required))
+    if "payee_name" in values:
+        profile_id = prof.account_profile(session, values.get("account_id", tx.account_id))
+        values["payee_id"] = _payee_by_name(session, profile_id, values.pop("payee_name"))
 
     new_account = values.get("account_id", tx.account_id)
     new_date = values.get("date", tx.date)
@@ -259,18 +265,22 @@ def update_transaction(tx_id: int, data: TransactionUpdate, session: Session = D
     if tx.state == TxState.RECONCILED and affects_balances:
         raise conflict(tr(LOCKED))
 
+    # Tout l'état final est contrôlé : un changement de compte vers un autre profil (décision 028) est
+    # refusé tant que le tiers ou la ventilation restent ceux de l'ancien profil.
     _check_refs(
         session,
-        account_id=values.get("account_id"),
-        payee_id=values.get("payee_id"),
+        new_account,
+        payee_id=values.get("payee_id", tx.payee_id),
         payment_method_id=values.get("payment_method_id"),
-        splits=new_splits or [],
+        splits=new_splits if new_splits is not None else tx.splits,
     )
 
     if tx.transfer_peer_id is not None:
         peer = _get(session, tx.transfer_peer_id)
         if new_account == peer.account_id:
             raise invalid(tr("Les deux opérations d'un virement ne peuvent pas être sur le même compte"))
+        if prof.account_profile(session, new_account) != prof.account_profile(session, peer.account_id):
+            raise invalid(tr("Les deux comptes d'un virement doivent être du même profil"))
         if new_amount != tx.amount or new_date != tx.date:
             if peer.state == TxState.RECONCILED:
                 raise conflict(tr(PEER_LOCKED))
@@ -332,16 +342,19 @@ def bulk_categorize(data: BulkCategorize, session: Session = Depends(get_session
         raise not_found("Opération", min(missing))
 
     values = data.model_dump(exclude={"ids"}, exclude_unset=True)
-    if "payee_name" in values:
-        values["payee_id"] = _payee_by_name(session, values.pop("payee_name"))
     if not values:
         raise invalid(tr("Indiquer au moins un champ à modifier (rubrique, classe ou tiers)"))
-
-    if values.get("payee_id") is not None and session.get(Payee, values["payee_id"]) is None:
-        raise not_found("Tiers", values["payee_id"])
-    for key, label, model in (("category_id", "Rubrique", Category), ("class_id", "Classe", AnalysisClass)):
-        if values.get(key) is not None and session.get(model, values[key]) is None:
-            raise not_found(label, values[key])
+    profile_ids = set(session.scalars(select(Account.profile_id).where(Account.id.in_({t.account_id for t in found}))))
+    if len(profile_ids) > 1:
+        raise invalid(tr("Les opérations choisies sont sur des comptes de profils différents"))
+    profile_id = profile_ids.pop()
+    if "payee_name" in values:
+        values["payee_id"] = _payee_by_name(session, profile_id, values.pop("payee_name"))
+    prof.check_refs(
+        session,
+        profile_id,
+        [(Payee, values.get("payee_id")), (Category, values.get("category_id")), (AnalysisClass, values.get("class_id"))],
+    )
 
     touches_splits = "category_id" in values or "class_id" in values
     skipped: list[int] = []
@@ -477,8 +490,10 @@ def get_attachment_content(tx_id: int, session: Session = Depends(get_session)):
 def create_transfer(data: TransferCreate, session: Session = Depends(get_session)):
     if data.from_account_id == data.to_account_id:
         raise invalid(tr("Les comptes source et cible doivent être différents"))
-    _check_refs(session, account_id=data.from_account_id, payment_method_id=data.payment_method_id)
-    _check_refs(session, account_id=data.to_account_id, splits=[Split(category_id=data.category_id, class_id=data.class_id)])
+    from_profile = _check_refs(session, data.from_account_id, payment_method_id=data.payment_method_id)
+    to_profile = _check_refs(session, data.to_account_id, splits=[Split(category_id=data.category_id, class_id=data.class_id)])
+    if from_profile != to_profile:
+        raise invalid(tr("Les deux comptes d'un virement doivent être du même profil"))
     from_account = session.get(Account, data.from_account_id)
     to_account = session.get(Account, data.to_account_id)
     if from_account.currency != to_account.currency:

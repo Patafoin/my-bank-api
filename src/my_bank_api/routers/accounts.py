@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from .. import profiles as prof
 from ..balances import account_balances, balances_by_account
 from ..db import get_session
 from ..errors import conflict, invalid, not_found
@@ -30,9 +31,9 @@ def _get(session: Session, account_id: int) -> Account:
     return account
 
 
-def _clear_default(session: Session, except_id: int | None = None) -> None:
-    """Un seul compte par défaut à la fois : désactive les autres avant d'en activer un nouveau."""
-    stmt = update(Account).where(Account.is_default.is_(True)).values(is_default=False)
+def _clear_default(session: Session, profile_id: int, except_id: int | None = None) -> None:
+    """Un seul compte par défaut à la fois dans un profil : désactive les autres avant d'en activer un nouveau."""
+    stmt = update(Account).where(Account.is_default.is_(True), Account.profile_id == profile_id).values(is_default=False)
     if except_id is not None:
         stmt = stmt.where(Account.id != except_id)
     session.execute(stmt)
@@ -42,9 +43,12 @@ def _clear_default(session: Session, except_id: int | None = None) -> None:
 def list_accounts(
     date: dt.date | None = Query(None, description="Soldes à cette date ; par défaut toutes les opérations"),
     include_closed: bool = True,
+    profile_id: int | None = Query(None, description="Seulement les comptes de ce profil"),
     session: Session = Depends(get_session),
 ):
     stmt = select(Account).order_by(Account.position, Account.name)
+    if profile_id is not None:
+        stmt = stmt.where(Account.profile_id == profile_id)
     if not include_closed:
         stmt = stmt.where(Account.closed.is_(False))
     balances = balances_by_account(session, date)
@@ -61,8 +65,9 @@ def _out(session: Session, account: Account, date: dt.date | None = None) -> dic
 def create_account(data: AccountCreate, session: Session = Depends(get_session)):
     values = data.model_dump()
     values["opening_balance"] = to_cents(data.opening_balance)
+    values["profile_id"] = prof.resolve(session, data.profile_id)
     if values.get("is_default"):
-        _clear_default(session)
+        _clear_default(session, values["profile_id"])
     account = Account(**values)
     session.add(account)
     commit_or_conflict(session, tr("Le compte « {name} » existe déjà", name=data.name))
@@ -86,7 +91,7 @@ def update_account(account_id: int, data: AccountUpdate, session: Session = Depe
         # model_dump() sérialise les montants en texte : repartir de l'attribut (Decimal).
         values["opening_balance"] = to_cents(data.opening_balance)
     if values.get("is_default"):
-        _clear_default(session, except_id=account_id)
+        _clear_default(session, account.profile_id, except_id=account_id)
     for key, value in values.items():
         setattr(account, key, value)
     commit_or_conflict(session, tr("Le compte « {name} » existe déjà", name=account.name))

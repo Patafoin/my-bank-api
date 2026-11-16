@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
+from .. import profiles as prof
 from ..db import get_session
 from ..errors import conflict, invalid, not_found
 from ..i18n import tr
@@ -29,6 +30,8 @@ def _pair(session: Session, model, label: str, source_id: int, target_id: int):
     target = session.get(model, target_id)
     if target is None:
         raise not_found(label, target_id)
+    # Les opérations restent dans leur profil (décision 028) : la cible doit être du même profil que la source.
+    prof.check_refs(session, source.profile_id, [(model, target_id)])
     return source, target
 
 

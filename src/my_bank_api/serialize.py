@@ -18,6 +18,7 @@ def transaction_counts(session: Session, column, ident: int | None = None) -> di
 def account_out(account: Account, balances: dict, transaction_count: int = 0) -> dict:
     return {
         "id": account.id,
+        "profile_id": account.profile_id,
         "name": account.name,
         "kind": account.kind,
         "number": account.number,

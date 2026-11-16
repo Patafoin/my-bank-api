@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from .. import profiles as prof
 from ..db import get_session
 from ..errors import conflict, invalid, not_found
 from ..i18n import tr
@@ -77,9 +78,8 @@ def _get_payee(session: Session, payee_id: int) -> Payee:
     return payee
 
 
-def _check_category(session: Session, category_id: int | None) -> None:
-    if category_id is not None and session.get(Category, category_id) is None:
-        raise not_found("Rubrique", category_id)
+def _check_category(session: Session, profile_id: int, category_id: int | None) -> None:
+    prof.check_refs(session, profile_id, [(Category, category_id)])
 
 
 def _payee_out(session: Session, payee: Payee, counts: dict[int, int] | None = None) -> PayeeOut:
@@ -92,9 +92,12 @@ def _payee_out(session: Session, payee: Payee, counts: dict[int, int] | None = N
 def list_payees(
     q: str | None = Query(None, description="Texte contenu dans le nom ou le nom abrégé"),
     active: bool | None = None,
+    profile_id: int | None = Query(None, description="Seulement les tiers de ce profil"),
     session: Session = Depends(get_session),
 ):
     stmt = select(Payee).order_by(func.lower(Payee.name))
+    if profile_id is not None:
+        stmt = stmt.where(Payee.profile_id == profile_id)
     if q:
         pattern = f"%{q.strip()}%"
         stmt = stmt.where(or_(Payee.name.ilike(pattern), Payee.short_name.ilike(pattern)))
@@ -111,8 +114,9 @@ def get_payee(payee_id: int, session: Session = Depends(get_session)):
 
 @payees.post("", response_model=PayeeOut, status_code=201)
 def create_payee(data: PayeeCreate, session: Session = Depends(get_session)):
-    _check_category(session, data.default_category_id)
-    payee = Payee(**data.model_dump())
+    profile_id = prof.resolve(session, data.profile_id)
+    _check_category(session, profile_id, data.default_category_id)
+    payee = Payee(**{**data.model_dump(), "profile_id": profile_id})
     session.add(payee)
     commit_or_conflict(session, tr("Le tiers « {name} » existe déjà", name=data.name))
     return _payee_out(session, payee)
@@ -126,7 +130,7 @@ def update_payee(payee_id: int, data: PayeeUpdate, session: Session = Depends(ge
         if required in values and values[required] is None:
             raise invalid(tr("`{key}` ne peut pas être vide", key=required))
     if "default_category_id" in values:
-        _check_category(session, values["default_category_id"])
+        _check_category(session, payee.profile_id, values["default_category_id"])
     for key, value in values.items():
         setattr(payee, key, value)
     commit_or_conflict(session, tr("Le tiers « {name} » existe déjà", name=payee.name))

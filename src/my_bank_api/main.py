@@ -14,7 +14,19 @@ from .i18n import language_from_header, reset_language, set_language
 from .jobs import daily_loop
 from .limits import BodySizeLimit
 from .migrate import upgrade
-from .routers import accounts, budgets, health, imports, moves, references, schedules, shares, transactions, trees
+from .routers import (
+    accounts,
+    budgets,
+    health,
+    imports,
+    moves,
+    profiles,
+    references,
+    schedules,
+    shares,
+    transactions,
+    trees,
+)
 
 API_PREFIX = "/api/v1"
 
@@ -68,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router, prefix=API_PREFIX)
     protected = [Depends(require_token)]
     for router in (
+        profiles.router,
         accounts.router,
         transactions.router,
         transactions.transfers,

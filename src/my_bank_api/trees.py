@@ -11,8 +11,12 @@ TreeModel = type[Category] | type[AnalysisClass]
 LABELS = {Category: "Rubrique", AnalysisClass: "Classe"}
 
 
-def load(session: Session, model: TreeModel) -> dict[int, Category | AnalysisClass]:
-    return {node.id: node for node in session.scalars(select(model))}
+def load(session: Session, model: TreeModel, profile_id: int | None = None) -> dict[int, Category | AnalysisClass]:
+    """Tous les nœuds, ou ceux d'un profil (une arborescence ne s'étend jamais sur deux profils)."""
+    stmt = select(model)
+    if profile_id is not None:
+        stmt = stmt.where(model.profile_id == profile_id)
+    return {node.id: node for node in session.scalars(stmt)}
 
 
 def ordered(nodes: dict[int, Category | AnalysisClass]) -> list[tuple[Category | AnalysisClass, str, int]]:

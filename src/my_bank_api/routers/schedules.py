@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import profiles as prof
 from .. import schedules as sched
 from ..db import get_session
 from ..errors import conflict, invalid, not_found
@@ -84,17 +85,18 @@ def _out(schedule: Schedule) -> dict:
 
 
 def _check(session: Session, s: Schedule) -> None:
-    """Règles de cohérence, sur l'état final (création comme modification)."""
-    for model, label, ident in (
-        (Account, "Compte", s.account_id),
-        (Account, "Compte", s.transfer_account_id),
-        (Payee, "Tiers", s.payee_id),
-        (PaymentMethod, "Mode de règlement", s.payment_method_id),
-        (Category, "Rubrique", s.category_id),
-        (AnalysisClass, "Classe", s.class_id),
-    ):
-        if ident is not None and session.get(model, ident) is None:
-            raise not_found(label, ident)
+    """Règles de cohérence, sur l'état final (création comme modification).
+
+    Compte du virement, tiers, rubrique et classe : du profil du compte de la planification (décision 028).
+    """
+    profile_id = prof.account_profile(session, s.account_id)
+    if s.payment_method_id is not None and session.get(PaymentMethod, s.payment_method_id) is None:
+        raise not_found("Mode de règlement", s.payment_method_id)
+    prof.check_refs(
+        session,
+        profile_id,
+        [(Account, s.transfer_account_id), (Payee, s.payee_id), (Category, s.category_id), (AnalysisClass, s.class_id)],
+    )
     if s.transfer_account_id is not None and s.transfer_account_id == s.account_id:
         raise invalid(tr("Le compte d'un virement planifié doit être différent du compte de la planification"))
     if s.transfer_account_id is not None:
@@ -146,12 +148,14 @@ def _tidy(session: Session, s: Schedule) -> None:
 
 
 def _apply(session: Session, schedule: Schedule, values: dict, data) -> None:
-    if "payee_name" in values:
-        values["payee_id"] = _payee_by_name(session, values.pop("payee_name"))
+    payee_name = values.pop("payee_name", None)
     if "amount" in values:
         values["amount"] = to_cents(data.amount)
     for key, value in values.items():
         setattr(schedule, key, value)
+    if payee_name is not None:
+        # Tiers cherché (ou créé) dans le profil du compte, une fois le compte éventuellement changé.
+        schedule.payee_id = _payee_by_name(session, prof.account_profile(session, schedule.account_id), payee_name)
     if schedule.end_mode != ScheduleEnd.DATE:
         schedule.end_date = None
     if schedule.end_mode != ScheduleEnd.COUNT:
@@ -161,15 +165,23 @@ def _apply(session: Session, schedule: Schedule, values: dict, data) -> None:
 # --- Lecture -------------------------------------------------------------------------------------
 
 
+def _in_profile(profile_id: int):
+    # Un virement planifié ne relie que deux comptes d'un même profil : le compte de la planification suffit.
+    return Schedule.account_id.in_(select(Account.id).where(Account.profile_id == profile_id))
+
+
 @router.get("", response_model=list[ScheduleOut], summary="Opérations planifiées, avec leur prochaine échéance")
 def list_schedules(
     account_id: int | None = None,
     active: bool | None = None,
+    profile_id: int | None = Query(None, description="Seulement les planifications des comptes de ce profil"),
     session: Session = Depends(get_session),
 ):
     stmt = select(Schedule).order_by(Schedule.label, Schedule.id)
     if account_id is not None:
         stmt = stmt.where((Schedule.account_id == account_id) | (Schedule.transfer_account_id == account_id))
+    if profile_id is not None:
+        stmt = stmt.where(_in_profile(profile_id))
     if active is not None:
         stmt = stmt.where(Schedule.active.is_(active))
     items = [_out(s) for s in session.scalars(stmt)]
@@ -185,6 +197,7 @@ def list_schedules(
 def upcoming(
     days: int = Query(30, ge=0, le=366, description="Horizon, en jours à partir d'aujourd'hui"),
     account_id: int | None = None,
+    profile_id: int | None = Query(None, description="Seulement les planifications des comptes de ce profil"),
     session: Session = Depends(get_session),
 ):
     today = sched.today()
@@ -192,6 +205,8 @@ def upcoming(
     stmt = select(Schedule).where(Schedule.active.is_(True))
     if account_id is not None:
         stmt = stmt.where((Schedule.account_id == account_id) | (Schedule.transfer_account_id == account_id))
+    if profile_id is not None:
+        stmt = stmt.where(_in_profile(profile_id))
     items = []
     for s in session.scalars(stmt):
         rows = _rows(s)
